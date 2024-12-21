@@ -21,7 +21,7 @@ class PolyLoss(nn.Module):
         self.DEVICE = DEVICE
 
     def forward(self, predicted, labels):
-        one_hot = torch.zeros((16, 2), device=self.DEVICE).scatter_(
+        one_hot = torch.zeros((labels.shape[0], 2), device=self.DEVICE).scatter_(
             1, torch.unsqueeze(labels, dim=-1), 1)
         pt = torch.sum(one_hot * F.softmax(predicted, dim=1), dim=-1)
         ce = self.CELoss(predicted, labels)

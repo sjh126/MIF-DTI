@@ -1,0 +1,130 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class MLP(nn.Module):
+
+    def __init__(self, dims, out_norm=False, in_norm=False, bias=True): #L=nb_hidden_layers
+        super().__init__()
+        list_FC_layers = [ nn.Linear(dims[idx-1], dims[idx], bias=bias) for idx in range(1,len(dims)) ]
+        self.FC_layers = nn.ModuleList(list_FC_layers)
+        self.hidden_layers = len(dims) - 2
+
+        self.out_norm = out_norm
+        self.in_norm = in_norm
+
+        if self.out_norm:
+            self.out_ln = nn.LayerNorm(dims[-1])
+        if self.in_norm:
+            self.in_ln = nn.LayerNorm(dims[0])
+
+    def reset_parameters(self):
+        for idx in range(self.hidden_layers+1):
+            self.FC_layers[idx].reset_parameters()
+        if self.out_norm:
+            self.out_ln.reset_parameters()
+        if self.in_norm:
+            self.in_ln.reset_parameters()
+
+    def forward(self, x):
+        y = x
+        # Input Layer Norm
+        if self.in_norm:
+            y = self.in_ln(y)
+
+        for idx in range(self.hidden_layers):
+            y = self.FC_layers[idx](y)
+            y = F.relu(y)
+        y = self.FC_layers[-1](y)
+
+        if self.out_norm:
+            y = self.out_ln(y)
+
+        return y
+
+
+class CoAttentionLayer(nn.Module):
+    def __init__(self, n_features):
+        super().__init__()
+        self.n_features = n_features
+        self.w_q = nn.Parameter(torch.zeros(n_features, n_features//2))
+        self.w_k = nn.Parameter(torch.zeros(n_features, n_features//2))
+        self.bias = nn.Parameter(torch.zeros(n_features // 2))
+        self.a = nn.Parameter(torch.zeros(n_features//2))
+
+        nn.init.xavier_uniform_(self.w_q)
+        nn.init.xavier_uniform_(self.w_k)
+        nn.init.xavier_uniform_(self.bias.view(*self.bias.shape, -1))
+        nn.init.xavier_uniform_(self.a.view(*self.a.shape, -1))
+    
+    def forward(self, receiver, attendant):
+        keys = receiver @ self.w_k
+        queries = attendant @ self.w_q
+
+        e_activations = queries.unsqueeze(-3) + keys.unsqueeze(-2) + self.bias
+        e_scores = torch.tanh(e_activations) @ self.a
+        attentions = e_scores
+        return attentions
+    
+
+class RESCAL(nn.Module):
+
+    def __init__(self, n_features):
+        super().__init__()
+        self.n_features = n_features
+        self.co_attn = CoAttentionLayer(n_features)
+        self.mlp = nn.Sequential(
+            nn.Dropout(0.1),
+            nn.Linear(36, 200),
+            nn.LeakyReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(200, 100),
+            nn.LeakyReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(100, 2)
+        )
+
+    def forward(self, heads, tails):
+        alpha_scores = self.co_attn(heads, tails)
+        heads = F.normalize(heads, dim=-1)
+        tails = F.normalize(tails, dim=-1)
+        scores = (heads @ tails.transpose(-2, -1)) * alpha_scores
+        scores = scores.sum(dim=(-2, -1))
+        return  torch.stack((1-scores, scores), dim=-1)
+        ## scores = self.mlp(scores.reshape(heads.shape[0], -1))
+        ## return scores
+    
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.n_rels}, {self.rel_emb.weight.shape})"
+    
+
+class AttentionLayer(nn.Module):
+    def __init__(self, n_features, heads=4):
+        super().__init__()
+        self.n_features = n_features
+        self.heads = heads
+        self.attn = nn.MultiheadAttention(self.n_features, self.heads, batch_first=True, dropout=0.3)
+        self.mlp = nn.Sequential(
+            nn.Dropout(0.1),
+            nn.Linear(self.n_features*2, self.n_features),
+            nn.LeakyReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(self.n_features, self.n_features),
+            nn.LeakyReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(self.n_features, 2)
+        )
+
+    def forward(self, drug_repr, prot_repr):
+        drug_output, _ = self.attn(drug_repr, prot_repr, prot_repr)
+        prot_output, _ = self.attn(prot_repr, drug_repr, drug_repr)
+
+        drug_output = drug_output * 0.5 + drug_repr * 0.5
+        prot_output = prot_output * 0.5 + prot_repr * 0.5
+
+        drug_pool, _ = torch.max(drug_output, dim=1)
+        prot_pool, _ = torch.max(prot_output, dim=1)
+        concat_repr = torch.cat([drug_pool, prot_pool], -1)
+        result = self.mlp(concat_repr)
+        return result

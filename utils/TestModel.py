@@ -62,13 +62,45 @@ def test_precess(MODEL, pbar, LOSS, DEVICE, FOLD_NUM):
     return Y, P, test_loss, Accuracy, Precision, Recall, AUC, PRC
 
 
-def test_model(MODEL, dataset_loader, save_path, DATASET, LOSS, DEVICE, dataset_class="Train", save=True, FOLD_NUM=1):
+def test_HDN_precess(MODEL, pbar, LOSS, DEVICE, FOLD_NUM):
+    MODEL.eval()
+    test_losses = []
+    Y, P, S = [], [], []
+    with torch.no_grad():
+        for _, data in pbar:
+            '''data preparation '''
+            data = data.to(DEVICE)
+
+            predicted_scores = MODEL(data.mol_x, data.mol_x_feat, data.mol_edge_index, \
+                        data.prot_node_aa, data.prot_node_evo, data.prot_edge_index, data.prot_edge_weight, \
+                            data.mol_x_batch, data.prot_node_aa_batch)
+            labels = data.cls_y.long()
+            loss = LOSS(predicted_scores, labels)
+            correct_labels = labels.to('cpu').data.numpy()
+            predicted_scores = F.softmax(predicted_scores, 1).to('cpu').data.numpy()
+            predicted_labels = np.argmax(predicted_scores, axis=1)
+            predicted_scores = predicted_scores[:, 1]
+
+            Y.extend(correct_labels)
+            P.extend(predicted_labels)
+            S.extend(predicted_scores)
+            test_losses.append(loss.item())
+    Precision = precision_score(Y, P)
+    Recall = recall_score(Y, P)
+    AUC = roc_auc_score(Y, S)
+    tpr, fpr, _ = precision_recall_curve(Y, S)
+    PRC = auc(fpr, tpr)
+    Accuracy = accuracy_score(Y, P)
+    test_loss = np.average(test_losses)
+    return Y, P, test_loss, Accuracy, Precision, Recall, AUC, PRC
+
+def test_model(MODEL, dataset_loader, save_path, DATASET, LOSS, DEVICE, dataset_class="Train", save=True, FOLD_NUM=1, HDN=False):
     test_pbar = tqdm(
         enumerate(
             BackgroundGenerator(dataset_loader)),
         total=len(dataset_loader))
-    T, P, loss_test, Accuracy_test, Precision_test, Recall_test, AUC_test, PRC_test = test_precess(
-        MODEL, test_pbar, LOSS, DEVICE, FOLD_NUM)
+    T, P, loss_test, Accuracy_test, Precision_test, Recall_test, AUC_test, PRC_test = \
+        test_HDN_precess(MODEL, test_pbar, LOSS, DEVICE, FOLD_NUM) if HDN else test_precess(MODEL, test_pbar, LOSS, DEVICE, FOLD_NUM)
     if save:
         if FOLD_NUM == 1:
             filepath = save_path + \

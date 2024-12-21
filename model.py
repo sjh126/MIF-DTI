@@ -11,6 +11,14 @@ FilePath: /MCANet/model.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn import Embedding
+from layers import *
+from torch_geometric.nn import (
+                                GATConv,
+                                SAGPooling,
+                                LayerNorm,
+                                global_add_pool
+                                )
 
 
 class MCANet(nn.Module):
@@ -126,6 +134,79 @@ class MCANet(nn.Module):
         predict = self.out(fully3)
         return predict
 
+class HDN_conv_block(nn.Module):
+    def __init__(self, in_channels=200, out_channels=200, num_heads=4, dropout=0.3):
+        super(HDN_conv_block, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.num_heads = num_heads
+        self.dropout = dropout
+
+        self.conv = GATConv(self.in_channels, self.out_channels//self.num_heads, self.num_heads, dropout=self.dropout)
+        self.norm = LayerNorm(self.in_channels)
+        self.readout = SAGPooling(self.out_channels, min_score=-1)
+
+    def forward(self, x, edge_index, batch, edge_attr=None):
+        x = F.elu(self.norm(x, batch))
+        x = self.conv(x, edge_index, edge_attr)
+        x, _, _, x_batch, _, _ = self.readout(x, edge_index, edge_attr=edge_attr, batch=batch)
+        global_graph_emb = global_add_pool(x, x_batch)
+        return x, global_graph_emb
+        
+class HDNDTI(nn.Module):
+    def __init__(self, depth=6):
+        super(HDNDTI, self).__init__()
+
+        self.drug_in_channels = 43
+        self.prot_in_channels = 33
+        self.prot_evo_in_channels = 1280
+        self.hidden_channels = 200
+
+        # MOLECULE IN FEAT
+        self.atom_type_encoder = Embedding(20, self.hidden_channels)
+        self.atom_feat_encoder = MLP([self.drug_in_channels, self.hidden_channels * 2, self.hidden_channels], out_norm=True) 
+
+        # PROTEIN IN FEAT
+        self.prot_evo = MLP([self.prot_evo_in_channels, self.hidden_channels * 2, self.hidden_channels], out_norm=True) 
+        self.prot_aa = MLP([self.prot_in_channels, self.hidden_channels * 2, self.hidden_channels], out_norm=True) 
+
+        # ENCODER
+        self.drug_convs = nn.ModuleList([HDN_conv_block() for _ in range(depth)])
+        self.prot_convs = nn.ModuleList([HDN_conv_block() for _ in range(depth)])
+
+        self.attn = RESCAL(self.hidden_channels)
+        # self.attn = AttentionLayer(self.hidden_channels)
+
+    def forward(self,
+                # Molecule
+                atom_x, atom_x_feat, atom_edge_index, 
+                # Protein
+                residue_x, residue_evo_x, residue_edge_index, residue_edge_weight,
+                # Batch
+                drug_batch, prot_batch):
+       
+        # MOLECULE Featurize
+        atom_x = self.atom_type_encoder(atom_x.squeeze()) + self.atom_feat_encoder(atom_x_feat)
+                
+        # PROTEIN Featurize
+        residue_x = self.prot_aa(residue_x) + self.prot_evo(residue_evo_x)
+
+        # Encoding
+        drug_repr = []
+        prot_repr = []
+        block_num = len(self.drug_convs)
+        for i in range(block_num):
+            atom_x, drug_global_repr = self.drug_convs[i](atom_x, atom_edge_index, drug_batch)
+            residue_x, prot_global_repr = self.prot_convs[i](residue_x, residue_edge_index, prot_batch, residue_edge_weight)
+            drug_repr.append(drug_global_repr)
+            prot_repr.append(prot_global_repr)
+        drug_repr = torch.stack(drug_repr, dim=-2)
+        prot_repr = torch.stack(prot_repr, dim=-2)
+
+        # Co-attn
+        scores = self.attn(drug_repr, prot_repr)
+
+        return scores
 
 class onlyPolyLoss(nn.Module):
     def __init__(self, hp,

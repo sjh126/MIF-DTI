@@ -152,7 +152,45 @@ class HDN_conv_block(nn.Module):
         x, _, _, x_batch, _, _ = self.readout(x, edge_index, edge_attr=edge_attr, batch=batch)
         global_graph_emb = global_add_pool(x, x_batch)
         return x, global_graph_emb
+
+
+class HDNBlock(nn.Module):
+    def __init__(self, in_channels=200, out_channels=200, num_heads=2, dropout=0.3):
+        super(HDNBlock, self).__init__()
         
+        self.hidden_channels = out_channels // (num_heads*2)
+        self.drug_conv = GATConv(in_channels, self.hidden_channels, num_heads, dropout=0.1)
+        self.prot_conv = GATConv(in_channels, self.hidden_channels, num_heads, dropout=0.1)
+        self.inter_conv = GATConv((in_channels, in_channels), self.hidden_channels, num_heads, dropout=0.3)
+        self.drug_norm = LayerNorm(out_channels)
+        self.prot_norm = LayerNorm(out_channels)
+        self.drug_pool = SAGPooling(out_channels, min_score=-1)
+        self.prot_pool = SAGPooling(out_channels, min_score=-1)
+
+    def forward(self, atom_x, atom_edge_index, atom_batch, \
+                aa_x, aa_edge_index, aa_edge_attr, aa_batch, m2p_edge_index):
+        
+        atom_x = F.elu(atom_x)
+        aa_x = F.elu(aa_x)
+
+        atom_intra_x = self.drug_conv(atom_x, atom_edge_index)
+        atom_inter_x = self.inter_conv((aa_x, atom_x), m2p_edge_index[[1,0]])
+        atom_x_tmp = torch.cat([atom_intra_x, atom_inter_x], -1)
+        atom_x = F.elu(self.drug_norm(atom_x_tmp, atom_batch))
+
+        aa_intra_x = self.prot_conv(aa_x, aa_edge_index, aa_edge_attr)
+        aa_inter_x = self.inter_conv((atom_x, aa_x), m2p_edge_index)
+        aa_x_tmp = torch.cat([aa_intra_x, aa_inter_x], -1)
+        aa_x = F.elu(self.prot_norm(aa_x_tmp, aa_batch))
+
+        atom_x, _, _, atom_batch, _, _ = self.drug_pool(atom_x, atom_edge_index, batch=atom_batch)
+        aa_x, _, _, aa_batch, _, _ = self.prot_pool(aa_x, aa_edge_index, edge_attr=aa_edge_attr, batch=aa_batch)
+        drug_global_repr = global_add_pool(atom_x, atom_batch)
+        prot_global_repr = global_add_pool(aa_x, aa_batch)
+
+        return atom_x, aa_x, drug_global_repr, prot_global_repr
+
+
 class HDNDTI(nn.Module):
     def __init__(self, depth=6):
         super(HDNDTI, self).__init__()
@@ -161,6 +199,7 @@ class HDNDTI(nn.Module):
         self.prot_in_channels = 33
         self.prot_evo_in_channels = 1280
         self.hidden_channels = 200
+        self.depth = depth
 
         # MOLECULE IN FEAT
         self.atom_type_encoder = Embedding(20, self.hidden_channels)
@@ -171,8 +210,9 @@ class HDNDTI(nn.Module):
         self.prot_aa = MLP([self.prot_in_channels, self.hidden_channels * 2, self.hidden_channels], out_norm=True) 
 
         # ENCODER
-        self.drug_convs = nn.ModuleList([HDN_conv_block() for _ in range(depth)])
-        self.prot_convs = nn.ModuleList([HDN_conv_block() for _ in range(depth)])
+        # self.drug_convs = nn.ModuleList([HDN_conv_block() for _ in range(depth)])
+        # self.prot_convs = nn.ModuleList([HDN_conv_block() for _ in range(depth)])
+        self.blocks = nn.ModuleList([HDNBlock() for _ in range(depth)])
 
         self.attn = RESCAL(self.hidden_channels)
         # self.attn = AttentionLayer(self.hidden_channels)
@@ -180,24 +220,29 @@ class HDNDTI(nn.Module):
     def forward(self,
                 # Molecule
                 atom_x, atom_x_feat, atom_edge_index, 
-                # Protein
-                residue_x, residue_evo_x, residue_edge_index, residue_edge_weight,
+                # Protein (amino acid)
+                aa_x, aa_evo_x, aa_edge_index, aa_edge_attr,
                 # Batch
-                drug_batch, prot_batch):
-       
+                atom_batch, aa_batch,
+                # Bi Graph
+                m2p_edge_index):
+
         # MOLECULE Featurize
         atom_x = self.atom_type_encoder(atom_x.squeeze()) + self.atom_feat_encoder(atom_x_feat)
                 
         # PROTEIN Featurize
-        residue_x = self.prot_aa(residue_x) + self.prot_evo(residue_evo_x)
+        aa_x = self.prot_aa(aa_x) + self.prot_evo(aa_evo_x)
 
         # Encoding
         drug_repr = []
         prot_repr = []
-        block_num = len(self.drug_convs)
-        for i in range(block_num):
-            atom_x, drug_global_repr = self.drug_convs[i](atom_x, atom_edge_index, drug_batch)
-            residue_x, prot_global_repr = self.prot_convs[i](residue_x, residue_edge_index, prot_batch, residue_edge_weight)
+        for i in range(self.depth):
+            # atom_x, drug_global_repr = self.drug_convs[i](atom_x, atom_edge_index, drug_batch)
+            # aa_x, prot_global_repr = self.prot_convs[i](aa_x, aa_edge_index, prot_batch, aa_edge_weight)
+            out = self.blocks[i](atom_x, atom_edge_index, atom_batch, \
+                                 aa_x, aa_edge_index, aa_edge_attr, aa_batch, \
+                                 m2p_edge_index)
+            atom_x, aa_x, drug_global_repr, prot_global_repr = out
             drug_repr.append(drug_global_repr)
             prot_repr.append(prot_global_repr)
         drug_repr = torch.stack(drug_repr, dim=-2)

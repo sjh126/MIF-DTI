@@ -391,8 +391,8 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS):
         optimizer = optim.AdamW(
             [{'params': weight_p, 'weight_decay': hp.weight_decay}, {'params': bias_p, 'weight_decay': 0}], lr=hp.Learning_rate)
 
-        scheduler = optim.lr_scheduler.CyclicLR(optimizer, base_lr=hp.Learning_rate, max_lr=hp.Learning_rate*10, cycle_momentum=False,
-                                                step_size_up=train_size // hp.Batch_size)
+        # scheduler = optim.lr_scheduler.CyclicLR(optimizer, base_lr=hp.Learning_rate, max_lr=hp.Learning_rate*10, cycle_momentum=False,
+                                                # step_size_up=train_size // hp.Batch_size)
         if LOSS == 'PolyLoss':
             Loss = PolyLoss(weight_loss=weight_loss,
                             DEVICE=DEVICE, epsilon=hp.loss_epsilon)
@@ -426,12 +426,12 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS):
                 data = data.to(DEVICE)
                 predicted_y= model(data.mol_x, data.mol_x_feat, data.mol_edge_index, \
                       data.prot_node_aa, data.prot_node_evo, data.prot_edge_index, data.prot_edge_weight, \
-                        data.mol_x_batch, data.prot_node_aa_batch)
-                train_loss = Loss(predicted_y, data.cls_y.long())
+                        data.mol_x_batch, data.prot_node_aa_batch, data.m2p_edge_index)
+                train_loss = Loss(predicted_y, data.cls_y)
                 train_losses_in_epoch.append(train_loss.item())
                 train_loss.backward()
                 optimizer.step()
-                scheduler.step()
+                # scheduler.step()
             train_loss_a_epoch = np.average(train_losses_in_epoch)  # 一次epoch的平均训练loss
 
             """valid"""
@@ -446,10 +446,10 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS):
 
                     data = data.to(DEVICE)
                     valid_scores = model(data.mol_x, data.mol_x_feat, data.mol_edge_index, \
-                        data.prot_node_aa, data.prot_node_evo, data.prot_edge_index, data.prot_edge_weight, \
-                            data.mol_x_batch, data.prot_node_aa_batch)
+                      data.prot_node_aa, data.prot_node_evo, data.prot_edge_index, data.prot_edge_weight, \
+                        data.mol_x_batch, data.prot_node_aa_batch, data.m2p_edge_index)
                     
-                    valid_labels = data.cls_y.long()
+                    valid_labels = data.cls_y
                     valid_loss = Loss(valid_scores, valid_labels)
                     valid_losses_in_epoch.append(valid_loss.item())
                     valid_labels = valid_labels.to('cpu').data.numpy()

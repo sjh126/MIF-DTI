@@ -75,14 +75,7 @@ class RESCAL(nn.Module):
         self.n_features = n_features
         self.co_attn = CoAttentionLayer(n_features)
         self.mlp = nn.Sequential(
-            nn.Dropout(0.1),
-            nn.Linear(36, 200),
-            nn.LeakyReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(200, 100),
-            nn.LeakyReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(100, 2)
+            nn.Linear(36, 2)
         )
 
     def forward(self, heads, tails):
@@ -90,10 +83,10 @@ class RESCAL(nn.Module):
         heads = F.normalize(heads, dim=-1)
         tails = F.normalize(tails, dim=-1)
         scores = (heads @ tails.transpose(-2, -1)) * alpha_scores
-        scores = scores.sum(dim=(-2, -1))
-        return  torch.stack((1-scores, scores), dim=-1)
-        ## scores = self.mlp(scores.reshape(heads.shape[0], -1))
-        ## return scores
+        # scores = scores.sum(dim=(-2, -1))
+        # return  torch.stack((1-scores, scores), dim=-1)
+        scores = self.mlp(scores.reshape(scores.shape[0], -1))
+        return scores
     
     def __repr__(self):
         return f"{self.__class__.__name__}({self.n_rels}, {self.rel_emb.weight.shape})"

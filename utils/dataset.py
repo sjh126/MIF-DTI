@@ -4,7 +4,19 @@ import torch
 from torch_geometric.data import Data
 import pickle
 import torch.utils.data
+import numpy as np
 
+
+def get_m2p_edge(mol_x, prot_x):
+    """ Construct edges from atoms to amino acids """
+
+    x1 = np.arange(0, mol_x.shape[0])
+    x2 = np.arange(0, prot_x.shape[0])
+    
+    grid_x1, grid_x2 = np.meshgrid(x1, x2)
+    edge_list = torch.LongTensor(np.vstack([grid_x1.ravel(), grid_x2.ravel()]))
+    
+    return edge_list
 
 class ProteinMoleculeDataset(Dataset):
     def __init__(self, sequence_data, mol_obj, prot_obj, device='cpu', cache_transform=True):
@@ -72,7 +84,7 @@ class ProteinMoleculeDataset(Dataset):
         # Extract data
         items = self.pairs[idx].split(' ')
         mol_key, prot_key = items[-3], items[-2]
-        cls_y = torch.tensor(int(items[-1])).float()
+        cls_y = torch.tensor(int(items[-1])).long()
             
         mol = self.mols[mol_key]
         prot = self.prots[prot_key]
@@ -137,7 +149,9 @@ class ProteinMoleculeDataset(Dataset):
                 ## Y output
                 cls_y=cls_y,
                 ## keys
-                mol_key = mol_key, prot_key = prot_key
+                mol_key = mol_key, prot_key = prot_key,
+                # BI GRAPH
+                m2p_edge_index = get_m2p_edge(mol_x, prot_node_aa)
         )
 
         return out

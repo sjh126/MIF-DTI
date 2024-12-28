@@ -57,4 +57,4 @@ class EarlyStopping:
             print(
                 f'Have a new best checkpoint: ({self.best_score:.6f} --> {score:.6f}).  Saving model ...')
         torch.save(model.state_dict(), self.savepath +
-                   '/valid_best_checkpoint.pth')
+                   f'/valid_best_checkpoint-{model.device}.pth')

@@ -297,7 +297,7 @@ def ensemble_run_model(SEED, DATASET, K_Fold):
                 Recall_test, AUC_test, PRC_test, Ensemble=True)
 
 
-def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS):
+def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
     '''set random seed'''
     random.seed(SEED)
     torch.manual_seed(SEED)
@@ -317,9 +317,9 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS):
 
     '''set loss function weight'''
     if DATASET == "Davis":
-        weight_loss = torch.FloatTensor([0.3, 0.7]).to(DEVICE)
+        weight_loss = torch.FloatTensor([0.3, 0.7]).to(device)
     elif DATASET == "KIBA":
-        weight_loss = torch.FloatTensor([0.2, 0.8]).to(DEVICE)
+        weight_loss = torch.FloatTensor([0.2, 0.8]).to(device)
     else:
         weight_loss = None
 
@@ -364,9 +364,9 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS):
         print('*' * 25, 'No.', i_fold + 1, '-fold', '*' * 25)
 
         train_dataset, valid_dataset = get_kfold_data(i_fold, train_data_list, k=K_Fold)
-        train_dataset = ProteinMoleculeDataset(train_dataset, ligand_dict, protein_dict, device=DEVICE)
-        valid_dataset = ProteinMoleculeDataset(valid_dataset, ligand_dict, protein_dict, device=DEVICE)
-        test_dataset = ProteinMoleculeDataset(test_data_list, ligand_dict, protein_dict, device=DEVICE)
+        train_dataset = ProteinMoleculeDataset(train_dataset, ligand_dict, protein_dict, device=device)
+        valid_dataset = ProteinMoleculeDataset(valid_dataset, ligand_dict, protein_dict, device=device)
+        test_dataset = ProteinMoleculeDataset(test_data_list, ligand_dict, protein_dict, device=device)
         train_size = len(train_dataset)
 
         train_loader = pyg_loader.DataLoader(train_dataset, batch_size=hp.Batch_size, shuffle=True, follow_batch=['mol_x', 'clique_x', 'prot_node_aa'], drop_last=True)
@@ -374,7 +374,7 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS):
         test_loader = pyg_loader.DataLoader(test_dataset, batch_size=hp.Batch_size,  shuffle=False, follow_batch=['mol_x', 'clique_x', 'prot_node_aa'], drop_last=True)
                                     
         """ create model"""
-        model = MODEL().to(DEVICE)
+        model = MODEL(device=device)
 
         """Initialize weights"""
         weight_p, bias_p = [], []
@@ -395,9 +395,9 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS):
                                                 # step_size_up=train_size // hp.Batch_size)
         if LOSS == 'PolyLoss':
             Loss = PolyLoss(weight_loss=weight_loss,
-                            DEVICE=DEVICE, epsilon=hp.loss_epsilon)
+                            DEVICE=device, epsilon=hp.loss_epsilon)
         else:
-            Loss = CELoss(weight_CE=weight_loss, DEVICE=DEVICE)
+            Loss = CELoss(weight_CE=weight_loss, DEVICE=device)
 
         """Output files"""
         save_path = "./" + DATASET + "/{}".format(i_fold+1)
@@ -413,18 +413,15 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS):
         for epoch in range(1, hp.Epoch + 1):
             if early_stopping.early_stop == True:
                 break
-            train_pbar = tqdm(
-                enumerate(BackgroundGenerator(train_loader)),
-                total=len(train_loader))
 
             """train"""
             train_losses_in_epoch = []
             model.train()
-            for _, data in train_pbar:
+            for data in train_loader:
                 optimizer.zero_grad()
 
-                data = data.to(DEVICE)
-                predicted_y= model(data.mol_x, data.mol_x_feat, data.mol_edge_index, \
+                data = data.to(device)
+                predicted_y= model(data.mol_x, data.mol_x_feat, data.mol_edge_index, data.mol_edge_attr, \
                       data.prot_node_aa, data.prot_node_evo, data.prot_edge_index, data.prot_edge_weight, \
                         data.mol_x_batch, data.prot_node_aa_batch, data.m2p_edge_index)
                 train_loss = Loss(predicted_y, data.cls_y)
@@ -435,17 +432,14 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS):
             train_loss_a_epoch = np.average(train_losses_in_epoch)  # 一次epoch的平均训练loss
 
             """valid"""
-            valid_pbar = tqdm(
-                enumerate(BackgroundGenerator(valid_loader)),
-                total=len(valid_loader))
             valid_losses_in_epoch = []
             model.eval()
             Y, P, S = [], [], []
             with torch.no_grad():
-                for _, data in valid_pbar:
+                for data in valid_loader:
 
-                    data = data.to(DEVICE)
-                    valid_scores = model(data.mol_x, data.mol_x_feat, data.mol_edge_index, \
+                    data = data.to(device)
+                    valid_scores = model(data.mol_x, data.mol_x_feat, data.mol_edge_index, data.mol_edge_attr, \
                       data.prot_node_aa, data.prot_node_evo, data.prot_edge_index, data.prot_edge_weight, \
                         data.mol_x_batch, data.prot_node_aa_batch, data.m2p_edge_index)
                     
@@ -484,15 +478,15 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS):
             early_stopping(Accuracy_dev, model, epoch)
 
         '''load best checkpoint'''
-        model.load_state_dict(torch.load(early_stopping.savepath + '/valid_best_checkpoint.pth'))
+        model.load_state_dict(torch.load(early_stopping.savepath + f'/valid_best_checkpoint-{device}.pth'))
 
         '''test model'''
         trainset_test_stable_results, _, _, _, _, _ = test_model(
-            model, train_loader, save_path, DATASET, Loss, DEVICE, dataset_class="Train", FOLD_NUM=1, HDN=True)
+            model, train_loader, save_path, DATASET, Loss, device, dataset_class="Train", FOLD_NUM=1, HDN=True)
         validset_test_stable_results, _, _, _, _, _ = test_model(
-            model, valid_loader, save_path, DATASET, Loss, DEVICE, dataset_class="Valid", FOLD_NUM=1, HDN=True)
+            model, valid_loader, save_path, DATASET, Loss, device, dataset_class="Valid", FOLD_NUM=1, HDN=True)
         testset_test_stable_results, Accuracy_test, Precision_test, Recall_test, AUC_test, PRC_test = test_model(
-            model, test_loader, save_path, DATASET, Loss, DEVICE, dataset_class="Test", FOLD_NUM=1, HDN=True)
+            model, test_loader, save_path, DATASET, Loss, device, dataset_class="Test", FOLD_NUM=1, HDN=True)
         AUC_List_stable.append(AUC_test)
         Accuracy_List_stable.append(Accuracy_test)
         AUPR_List_stable.append(PRC_test)

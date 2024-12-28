@@ -3,4 +3,5 @@
 *.txt
 *.pt
 
+log/*
 .vscode/

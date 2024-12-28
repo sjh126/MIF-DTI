@@ -70,12 +70,12 @@ class CoAttentionLayer(nn.Module):
 
 class RESCAL(nn.Module):
 
-    def __init__(self, n_features):
+    def __init__(self, n_features, depth):
         super().__init__()
         self.n_features = n_features
         self.co_attn = CoAttentionLayer(n_features)
         self.mlp = nn.Sequential(
-            nn.Linear(36, 2)
+            nn.Linear(depth*depth, 2)
         )
 
     def forward(self, heads, tails):
@@ -121,3 +121,21 @@ class AttentionLayer(nn.Module):
         concat_repr = torch.cat([drug_pool, prot_pool], -1)
         result = self.mlp(concat_repr)
         return result
+    
+
+def rbf(D, D_min=0., D_max=1., D_count=16, device='cpu'):
+    '''
+    From https://github.com/jingraham/neurips19-graph-protein-design
+
+    Returns an RBF embedding of `torch.Tensor` `D` along a new axis=-1.
+    That is, if `D` has shape [...dims], then the returned tensor will have
+    shape [...dims, D_count].
+    '''
+    D = torch.where(D < D_max, D, torch.tensor(D_max).float().to(device) )
+    D_mu = torch.linspace(D_min, D_max, D_count, device=device)
+    D_mu = D_mu.view([1, -1])
+    D_sigma = (D_max - D_min) / D_count
+    D_expand = torch.unsqueeze(D, -1)
+
+    RBF = torch.exp(-((D_expand - D_mu) / D_sigma) ** 2)
+    return RBF

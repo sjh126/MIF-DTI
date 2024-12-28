@@ -71,7 +71,7 @@ def test_HDN_precess(MODEL, pbar, LOSS, DEVICE, FOLD_NUM):
             '''data preparation '''
             data = data.to(DEVICE)
 
-            predicted_scores = MODEL(data.mol_x, data.mol_x_feat, data.mol_edge_index, \
+            predicted_scores = MODEL(data.mol_x, data.mol_x_feat, data.mol_edge_index, data.mol_edge_attr, \
                         data.prot_node_aa, data.prot_node_evo, data.prot_edge_index, data.prot_edge_weight, \
                             data.mol_x_batch, data.prot_node_aa_batch, data.m2p_edge_index)
             labels = data.cls_y
@@ -95,10 +95,11 @@ def test_HDN_precess(MODEL, pbar, LOSS, DEVICE, FOLD_NUM):
     return Y, P, test_loss, Accuracy, Precision, Recall, AUC, PRC
 
 def test_model(MODEL, dataset_loader, save_path, DATASET, LOSS, DEVICE, dataset_class="Train", save=True, FOLD_NUM=1, HDN=False):
-    test_pbar = tqdm(
-        enumerate(
-            BackgroundGenerator(dataset_loader)),
-        total=len(dataset_loader))
+    # test_pbar = tqdm(
+    #     enumerate(
+    #         BackgroundGenerator(dataset_loader)),
+    #     total=len(dataset_loader))
+    test_pbar = enumerate(BackgroundGenerator(dataset_loader))
     T, P, loss_test, Accuracy_test, Precision_test, Recall_test, AUC_test, PRC_test = \
         test_HDN_precess(MODEL, test_pbar, LOSS, DEVICE, FOLD_NUM) if HDN else test_precess(MODEL, test_pbar, LOSS, DEVICE, FOLD_NUM)
     if save:

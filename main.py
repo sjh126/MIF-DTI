@@ -1,5 +1,5 @@
 import argparse
-
+import torch
 from RunModel import run_model, ensemble_run_model, run_HDN_model
 from model import MCANet, onlyPolyLoss, HDNDTI
 
@@ -16,7 +16,11 @@ parser.add_argument('-s', '--seed', type=int, default=114514,
                     help='Set the random seed, the default is 114514')
 parser.add_argument('-f', '--fold', type=int, default=5,
                     help='Set the K-Fold number, the default is 5')
+parser.add_argument('-g', '--gpu', type=int, default=0,
+                    help='cuda number, the default is 0')
+
 args = parser.parse_args()
+device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
 
 if args.model == 'MCANet':
     run_model(SEED=args.seed, DATASET=args.dataSetName,
@@ -31,4 +35,4 @@ if args.model == 'MCANet-B':
     ensemble_run_model(SEED=args.seed, DATASET=args.dataSetName, K_Fold=args.fold)
 if args.model == 'HDN-DTI':
     run_HDN_model(SEED=args.seed, DATASET=args.dataSetName,
-              MODEL=HDNDTI, K_Fold=args.fold, LOSS='PolyLoss')
+              MODEL=HDNDTI, K_Fold=args.fold, LOSS='PolyLoss', device=device)

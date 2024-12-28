@@ -161,19 +161,19 @@ class HDNBlock(nn.Module):
         self.hidden_channels = out_channels // (num_heads*2)
         self.drug_conv = GATConv(in_channels, self.hidden_channels, num_heads, dropout=0.1)
         self.prot_conv = GATConv(in_channels, self.hidden_channels, num_heads, dropout=0.1)
-        self.inter_conv = GATConv((in_channels, in_channels), self.hidden_channels, num_heads, dropout=0.3)
+        self.inter_conv = GATConv((in_channels, in_channels), self.hidden_channels, num_heads, dropout=dropout)
         self.drug_norm = LayerNorm(out_channels)
         self.prot_norm = LayerNorm(out_channels)
         self.drug_pool = SAGPooling(out_channels, min_score=-1)
         self.prot_pool = SAGPooling(out_channels, min_score=-1)
 
-    def forward(self, atom_x, atom_edge_index, atom_batch, \
+    def forward(self, atom_x, atom_edge_index, bond_x, atom_batch, \
                 aa_x, aa_edge_index, aa_edge_attr, aa_batch, m2p_edge_index):
         
-        atom_x = F.elu(atom_x)
-        aa_x = F.elu(aa_x)
+        atom_x_res = atom_x
+        aa_x_res = aa_x
 
-        atom_intra_x = self.drug_conv(atom_x, atom_edge_index)
+        atom_intra_x = self.drug_conv(atom_x, atom_edge_index, bond_x)
         atom_inter_x = self.inter_conv((aa_x, atom_x), m2p_edge_index[[1,0]])
         atom_x_tmp = torch.cat([atom_intra_x, atom_inter_x], -1)
         atom_x = F.elu(self.drug_norm(atom_x_tmp, atom_batch))
@@ -185,6 +185,8 @@ class HDNBlock(nn.Module):
 
         atom_x, _, _, atom_batch, _, _ = self.drug_pool(atom_x, atom_edge_index, batch=atom_batch)
         aa_x, _, _, aa_batch, _, _ = self.prot_pool(aa_x, aa_edge_index, edge_attr=aa_edge_attr, batch=aa_batch)
+        atom_x = F.dropout(atom_x_res+F.elu(atom_x), 0.1, self.training)
+        aa_x = F.dropout(aa_x_res+F.elu(aa_x), 0.1, self.training)
         drug_global_repr = global_add_pool(atom_x, atom_batch)
         prot_global_repr = global_add_pool(aa_x, aa_batch)
 
@@ -192,7 +194,7 @@ class HDNBlock(nn.Module):
 
 
 class HDNDTI(nn.Module):
-    def __init__(self, depth=6):
+    def __init__(self, depth=6, device='cuda:0'):
         super(HDNDTI, self).__init__()
 
         self.drug_in_channels = 43
@@ -200,6 +202,7 @@ class HDNDTI(nn.Module):
         self.prot_evo_in_channels = 1280
         self.hidden_channels = 200
         self.depth = depth
+        self.device = device
 
         # MOLECULE IN FEAT
         self.atom_type_encoder = Embedding(20, self.hidden_channels)
@@ -214,14 +217,16 @@ class HDNDTI(nn.Module):
         # self.prot_convs = nn.ModuleList([HDN_conv_block() for _ in range(depth)])
         self.blocks = nn.ModuleList([HDNBlock() for _ in range(depth)])
 
-        self.attn = RESCAL(self.hidden_channels)
+        self.attn = RESCAL(self.hidden_channels, self.depth)
         # self.attn = AttentionLayer(self.hidden_channels)
+
+        self.to(device)
 
     def forward(self,
                 # Molecule
-                atom_x, atom_x_feat, atom_edge_index, 
+                atom_x, atom_x_feat, atom_edge_index, bond_x,
                 # Protein (amino acid)
-                aa_x, aa_evo_x, aa_edge_index, aa_edge_attr,
+                aa_x, aa_evo_x, aa_edge_index, aa_edge_weight,
                 # Batch
                 atom_batch, aa_batch,
                 # Bi Graph
@@ -232,6 +237,7 @@ class HDNDTI(nn.Module):
                 
         # PROTEIN Featurize
         aa_x = self.prot_aa(aa_x) + self.prot_evo(aa_evo_x)
+        aa_edge_attr = rbf(aa_edge_weight, D_max=1.0, D_count=self.hidden_channels, device=self.device)
 
         # Encoding
         drug_repr = []
@@ -239,7 +245,7 @@ class HDNDTI(nn.Module):
         for i in range(self.depth):
             # atom_x, drug_global_repr = self.drug_convs[i](atom_x, atom_edge_index, drug_batch)
             # aa_x, prot_global_repr = self.prot_convs[i](aa_x, aa_edge_index, prot_batch, aa_edge_weight)
-            out = self.blocks[i](atom_x, atom_edge_index, atom_batch, \
+            out = self.blocks[i](atom_x, atom_edge_index, bond_x, atom_batch, \
                                  aa_x, aa_edge_index, aa_edge_attr, aa_batch, \
                                  m2p_edge_index)
             atom_x, aa_x, drug_global_repr, prot_global_repr = out

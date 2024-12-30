@@ -345,14 +345,14 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
         protein_dict = protein_init(protein_seqs)
         torch.save(protein_dict,protein_path)
 
-    ligand_path = f'./DataSets/Preprocessed/{DATASET}-ligand.pt'
+    ligand_path = f'./DataSets/Preprocessed/{DATASET}-ligand-hi.pt'
     if os.path.exists(ligand_path):
         print('Loading Ligand Graph data...')
         ligand_dict = torch.load(ligand_path)
     else:
         print('Initialising Ligand SMILES to Ligand Graph...')
         ligand_smiles = list(set([item.split(' ')[-3] for item in data_list]))
-        ligand_dict = ligand_init(ligand_smiles)
+        ligand_dict = ligand_init(ligand_smiles, mode='BRICS')
         torch.save(ligand_dict,ligand_path)
 
     torch.cuda.empty_cache()
@@ -421,7 +421,7 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
                 optimizer.zero_grad()
 
                 data = data.to(device)
-                predicted_y= model(data.mol_x, data.mol_x_feat, data.mol_edge_index, data.mol_edge_attr, \
+                predicted_y= model(data.mol_x, data.mol_x_feat, data.mol_edge_index, data.mol_edge_attr, data.mol_node_levels, \
                       data.prot_node_aa, data.prot_node_evo, data.prot_edge_index, data.prot_edge_weight, \
                         data.mol_x_batch, data.prot_node_aa_batch, data.m2p_edge_index)
                 train_loss = Loss(predicted_y, data.cls_y)
@@ -439,7 +439,7 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
                 for data in valid_loader:
 
                     data = data.to(device)
-                    valid_scores = model(data.mol_x, data.mol_x_feat, data.mol_edge_index, data.mol_edge_attr, \
+                    valid_scores = model(data.mol_x, data.mol_x_feat, data.mol_edge_index, data.mol_edge_attr, data.mol_node_levels, \
                       data.prot_node_aa, data.prot_node_evo, data.prot_edge_index, data.prot_edge_weight, \
                         data.mol_x_batch, data.prot_node_aa_batch, data.m2p_edge_index)
                     

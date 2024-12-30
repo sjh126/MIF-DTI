@@ -155,16 +155,17 @@ class HDN_conv_block(nn.Module):
 
 
 class HDNBlock(nn.Module):
-    def __init__(self, in_channels=200, out_channels=200, num_heads=2, dropout=0.3):
+    def __init__(self, in_channels=200, out_channels=200, num_heads=5, dropout=0.3):
         super(HDNBlock, self).__init__()
         
         self.hidden_channels = out_channels // (num_heads*2)
         self.drug_conv = GATConv(in_channels, self.hidden_channels, num_heads, dropout=0.1)
-        self.prot_conv = GATConv(in_channels, self.hidden_channels, num_heads, dropout=0.1)
+        self.prot_conv = GATConv(in_channels, self.hidden_channels, num_heads, dropout=0.3)
         self.inter_conv = GATConv((in_channels, in_channels), self.hidden_channels, num_heads, dropout=dropout)
         self.drug_norm = LayerNorm(out_channels)
         self.prot_norm = LayerNorm(out_channels)
         self.drug_pool = SAGPooling(out_channels, min_score=-1)
+        # self.drug_pool = GATConv(out_channels, out_channels//num_heads, num_heads)
         self.prot_pool = SAGPooling(out_channels, min_score=-1)
 
     def forward(self, atom_x, atom_edge_index, bond_x, atom_batch, \
@@ -184,7 +185,9 @@ class HDNBlock(nn.Module):
         aa_x = F.elu(self.prot_norm(aa_x_tmp, aa_batch))
 
         atom_x, _, _, atom_batch, _, _ = self.drug_pool(atom_x, atom_edge_index, batch=atom_batch)
+        # atom_x = self.drug_pool(atom_x, atom_edge_index, bond_x)
         aa_x, _, _, aa_batch, _, _ = self.prot_pool(aa_x, aa_edge_index, edge_attr=aa_edge_attr, batch=aa_batch)
+        # aa_x, aa_edge_index, aa_edge_attr, aa_batch, _, _ = self.prot_pool(aa_x, aa_edge_index, edge_attr=aa_edge_attr, batch=aa_batch)
         atom_x = F.dropout(atom_x_res+F.elu(atom_x), 0.1, self.training)
         aa_x = F.dropout(aa_x_res+F.elu(aa_x), 0.1, self.training)
         drug_global_repr = global_add_pool(atom_x, atom_batch)
@@ -194,7 +197,7 @@ class HDNBlock(nn.Module):
 
 
 class HDNDTI(nn.Module):
-    def __init__(self, depth=6, device='cuda:0'):
+    def __init__(self, depth=4, device='cuda:0'):
         super(HDNDTI, self).__init__()
 
         self.drug_in_channels = 43
@@ -224,7 +227,7 @@ class HDNDTI(nn.Module):
 
     def forward(self,
                 # Molecule
-                atom_x, atom_x_feat, atom_edge_index, bond_x,
+                atom_x, atom_x_feat, atom_edge_index, bond_x, mol_node_levels,
                 # Protein (amino acid)
                 aa_x, aa_evo_x, aa_edge_index, aa_edge_weight,
                 # Batch
@@ -249,6 +252,10 @@ class HDNDTI(nn.Module):
                                  aa_x, aa_edge_index, aa_edge_attr, aa_batch, \
                                  m2p_edge_index)
             atom_x, aa_x, drug_global_repr, prot_global_repr = out
+            # atom_x, drug_global_repr, prot_global_repr = out[0], out[2], out[3]
+            # aa_x, aa_edge_index, aa_edge_attr, aa_batch = out[1]
+            # m2p_edge_index = get_m2p_edge_from_batch(atom_batch, aa_batch, mol_node_levels)
+            drug_global_repr = atom_x[mol_node_levels==2]
             drug_repr.append(drug_global_repr)
             prot_repr.append(prot_global_repr)
         drug_repr = torch.stack(drug_repr, dim=-2)
@@ -347,3 +354,12 @@ class onlyPolyLoss(nn.Module):
         fully3 = self.leaky_relu(self.fc3(fully2))
         predict = self.out(fully3)
         return predict
+
+def get_m2p_edge_from_batch(atom_batch, aa_batch, node_level=None):
+
+    mask = atom_batch.unsqueeze(1) == aa_batch.unsqueeze(0)  # (num_a_nodes, num_b_nodes) 的bool矩阵
+    if node_level is not None:
+        mask = mask * (node_level==1).unsqueeze(1)
+    a_idx, b_idx = torch.nonzero(mask, as_tuple=True)
+    edge_list = torch.stack([a_idx, b_idx], dim=0)
+    return edge_list

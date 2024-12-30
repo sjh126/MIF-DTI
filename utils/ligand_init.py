@@ -5,6 +5,7 @@ from rdkit.Chem import ChemicalFeatures
 from rdkit import RDConfig
 import os
 import numpy as np
+from utils.BRICS_decomp import motif_decomp
 
 import torch
 
@@ -470,9 +471,124 @@ def smiles2graph(m_str):
     return out_dict 
 ####
 
-def ligand_init(smiles_list):
+###
+def clique_node_features(degree, total_num_Hs, is_aromatic):
+    encoding = one_of_k_encoding_unk(degree, [0,1,2,3,4,5,6,7,8,9,10]) + one_of_k_encoding_unk(total_num_Hs, [0,1,2,3,4,5,6,7,8,9,10])
+    encoding += [0,0,0,0,0,0,0,0,0,0,1]
+    encoding += [0,0,0,0,0,1]
+    encoding += [is_aromatic]
+    encoding += [0, 0, 0]
+    return np.array(encoding)
+
+def smiles2graph_junction_tree(m_str):
+    mgd = MoleculeGraphDataset(halogen_detail=False)
+    mol = Chem.MolFromSmiles(m_str)
+    atom_feature, bond_feature = mgd.featurize(mol,'atom_full_feature')
+    atom_idx, _ = mgd.featurize(mol,'atom_type')
+    tree = mgd.junction_tree(mol)
+
+    num_atoms = atom_feature.shape[0]
+    num_cliques = len(tree['x_clique'])
+    c_degree = (torch.bincount(tree['tree_edge_index'][1]) if num_cliques>1 else 0) + torch.bincount(tree['atom2clique_index'][1])
+    c_ring = tree['x_clique']!=1
+    c_Hs = [0] * num_cliques
+    for i, a in enumerate(tree['atom2clique_index'][0]):
+       c_Hs[tree['atom2clique_index'][1][i]] += np.sum(atom_feature[a][11:22] * np.arange(11))
+
+    hi_node_feature = np.concatenate([
+        atom_feature,
+        np.array([clique_node_features(c_degree[i], c_Hs[i], c_ring[i]) for i in range(num_cliques)]),
+        np.array([clique_node_features(num_cliques, np.sum(c_Hs), 0)])
+    ])
+
+    hi_bond_feature = np.pad(bond_feature, pad_width=((0, num_cliques+1),(0, num_cliques+1)), mode='constant', constant_values=0)
+    for i in range(num_atoms):
+        a_idx = tree['atom2clique_index'][0][i]
+        c_idx = tree['atom2clique_index'][1][i]
+        hi_bond_feature[a_idx][c_idx+num_atoms] = hi_bond_feature[c_idx+num_atoms][a_idx] = 5 
+        
+    for i in range(num_cliques):
+        hi_bond_feature[i+num_atoms][num_cliques+num_atoms] = hi_bond_feature[num_cliques+num_atoms][i+num_atoms] = 6
+
+    max_idx = max(list(mgd.ATOM_CODES.values()))
+    hi_node_idx = np.concatenate([
+        atom_idx,
+        np.array([max_idx + 1] * num_cliques).reshape(-1, 1),
+        np.array([max_idx + 2]).reshape(-1, 1),
+    ])
+
+    node_levels = np.array([0]*num_atoms + [1]*num_cliques + [2])
+
+    out_dict = {
+        'smiles':m_str,
+        'atom_feature':torch.tensor(hi_node_feature),
+        'atom_types':'|'.join([i.GetSymbol() for i in mol.GetAtoms()]+[f'C{i}' for i in tree['x_clique']]+['M']),
+        'atom_idx':torch.tensor(hi_node_idx),
+        'bond_feature':torch.tensor(hi_bond_feature),
+        'node_levels': torch.tensor(node_levels)
+    }
+
+    return out_dict 
+####
+
+def smiles2graph_BRICS(m_str):
+    mgd = MoleculeGraphDataset(halogen_detail=False)
+    mol = Chem.MolFromSmiles(m_str)
+    atom_feature, bond_feature = mgd.featurize(mol,'atom_full_feature')
+    atom_idx, _ = mgd.featurize(mol,'atom_type')
+    cliques = motif_decomp(mol)
+
+    num_atoms = atom_feature.shape[0]
+    num_cliques = len(cliques)
+    if num_cliques==0:
+        return smiles2graph_junction_tree(m_str)
+    else:
+        c_degree = [len(c)+1 for c in cliques]
+        c_Hs = [0] * num_cliques
+        for i, c in enumerate(cliques):
+            for a in c:
+                c_Hs[i] += np.sum(atom_feature[a][11:22] * np.arange(11))
+
+        hi_node_feature = np.concatenate([
+            atom_feature,
+            np.array([clique_node_features(c_degree[i], c_Hs[i], 0) for i in range(num_cliques)]),
+            np.array([clique_node_features(num_cliques, np.sum(c_Hs), 0)])
+        ])
+
+        hi_bond_feature = np.pad(bond_feature, pad_width=((0, num_cliques+1),(0, num_cliques+1)), mode='constant', constant_values=0)
+        for i, c in enumerate(cliques):
+            hi_bond_feature[i+num_atoms][num_cliques+num_atoms] = hi_bond_feature[num_cliques+num_atoms][i+num_atoms] = 5
+            for a in c:
+                hi_bond_feature[a][i+num_atoms] = hi_bond_feature[i+num_atoms][a] = 5 
+
+        max_idx = max(list(mgd.ATOM_CODES.values()))
+        hi_node_idx = np.concatenate([
+            atom_idx,
+            np.array([max_idx+1]*num_cliques).reshape(-1, 1),
+            np.array([max_idx+2]).reshape(-1, 1),
+        ])
+
+        node_levels = np.array([0]*num_atoms + [1]*num_cliques + [2])
+
+        out_dict = {
+            'smiles':m_str,
+            'atom_feature':torch.tensor(hi_node_feature),
+            'atom_types':'|'.join([i.GetSymbol() for i in mol.GetAtoms()]+[f'BC{i}' for i in range(num_cliques)]+['M']),
+            'atom_idx':torch.tensor(hi_node_idx),
+            'bond_feature':torch.tensor(hi_bond_feature),
+            'node_levels': torch.tensor(node_levels),
+        }
+
+        return out_dict 
+
+def ligand_init(smiles_list, mode=None):
     ligand_dict = {}
     for smiles in tqdm(smiles_list):
-        ligand_dict[smiles] = smiles2graph(smiles)
+        if mode=='BRICS':
+            ligand_dict[smiles] = smiles2graph_BRICS(smiles)
+        elif mode=='tree':
+            ligand_dict[smiles] = smiles2graph_junction_tree(smiles)
+        else:
+            ligand_dict[smiles] = smiles2graph(smiles)
 
     return ligand_dict

@@ -2,6 +2,7 @@
 *.pth
 *.txt
 *.pt
+demo*
 
 log/*
 .vscode/

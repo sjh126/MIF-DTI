@@ -7,10 +7,11 @@ import torch.utils.data
 import numpy as np
 
 
-def get_m2p_edge(mol_x, prot_x):
+def get_m2p_edge(mol_x, prot_x, mol_node_level=None):
     """ Construct edges from atoms to amino acids """
 
     x1 = np.arange(0, mol_x.shape[0])
+    x1 = x1[mol_node_level==1] if mol_node_level is not None else x1
     x2 = np.arange(0, prot_x.shape[0])
     
     grid_x1, grid_x2 = np.meshgrid(x1, x2)
@@ -58,11 +59,6 @@ class ProteinMoleculeDataset(Dataset):
                 v['atom_edge_attr'] = adj[mol_edge_index[0], mol_edge_index[1]].long()
                 v['atom_num_nodes'] = v['atom_idx'].shape[0]
 
-                ## Clique
-                v['x_clique'] = v['x_clique'].long().view(-1, 1)
-                v['clique_num_nodes'] = v['x_clique'].shape[0]
-                v['tree_edge_index'] = v['tree_edge_index'].long()
-                v['atom2clique_index'] = v['atom2clique_index'].long()
 
             for _, v in self.prots.items():
                 v['seq_feat'] = v['seq_feat'].float()
@@ -98,11 +94,6 @@ class ProteinMoleculeDataset(Dataset):
             mol_edge_attr = mol['atom_edge_attr']
             mol_num_nodes = mol['atom_num_nodes']
 
-            ## Clique
-            mol_x_clique = mol['x_clique']
-            clique_num_nodes = mol['clique_num_nodes']
-            clique_edge_index = mol['tree_edge_index']
-            atom2clique_index = mol['atom2clique_index']
             ## Prot
             prot_seq = prot['seq']
             prot_node_aa = prot['seq_feat']
@@ -120,11 +111,6 @@ class ProteinMoleculeDataset(Dataset):
             mol_edge_attr = adj[mol_edge_index[0], mol_edge_index[1]].long()
             mol_num_nodes = mol_x.shape[0]
 
-            ## Clique
-            mol_x_clique = mol['x_clique'].long().view(-1, 1)
-            clique_num_nodes = mol_x_clique.shape[0]
-            clique_edge_index = mol['tree_edge_index'].long()
-            atom2clique_index = mol['atom2clique_index'].long()
 
 
             prot_seq = prot['seq']
@@ -138,9 +124,7 @@ class ProteinMoleculeDataset(Dataset):
         out = MultiGraphData(
                 ## MOLECULE
                 mol_x=mol_x, mol_x_feat=mol_x_feat, mol_edge_index=mol_edge_index,
-                mol_edge_attr=mol_edge_attr, mol_num_nodes= mol_num_nodes,
-                clique_x=mol_x_clique, clique_edge_index=clique_edge_index, atom2clique_index=atom2clique_index,
-                clique_num_nodes=clique_num_nodes,
+                mol_edge_attr=mol_edge_attr, mol_num_nodes= mol_num_nodes, mol_node_levels=mol['node_levels'],
                 ## PROTEIN
                 prot_node_aa=prot_node_aa, prot_node_evo=prot_node_evo,
                 prot_node_pos=prot_node_pos, prot_seq=prot_seq,
@@ -151,7 +135,7 @@ class ProteinMoleculeDataset(Dataset):
                 ## keys
                 mol_key = mol_key, prot_key = prot_key,
                 # BI GRAPH
-                m2p_edge_index = get_m2p_edge(mol_x, prot_node_aa)
+                m2p_edge_index = get_m2p_edge(mol_x, prot_node_aa, mol['node_levels'])
         )
 
         return out

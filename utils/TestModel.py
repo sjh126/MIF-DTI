@@ -71,7 +71,7 @@ def test_HDN_precess(MODEL, pbar, LOSS, DEVICE, FOLD_NUM):
             '''data preparation '''
             data = data.to(DEVICE)
 
-            predicted_scores = MODEL(data.mol_x, data.mol_x_feat, data.mol_edge_index, data.mol_edge_attr, \
+            predicted_scores = MODEL(data.mol_x, data.mol_x_feat, data.mol_edge_index, data.mol_edge_attr, data.mol_node_levels, \
                         data.prot_node_aa, data.prot_node_evo, data.prot_edge_index, data.prot_edge_weight, \
                             data.mol_x_batch, data.prot_node_aa_batch, data.m2p_edge_index)
             labels = data.cls_y

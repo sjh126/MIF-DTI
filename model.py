@@ -155,7 +155,7 @@ class HDN_conv_block(nn.Module):
 
 
 class HDNBlock(nn.Module):
-    def __init__(self, in_channels=200, out_channels=200, num_heads=5, dropout=0.3):
+    def __init__(self, in_channels=200, out_channels=200, num_heads=5, dropout=0.4):
         super(HDNBlock, self).__init__()
         
         self.hidden_channels = out_channels // (num_heads*2)
@@ -164,9 +164,9 @@ class HDNBlock(nn.Module):
         self.inter_conv = GATConv((in_channels, in_channels), self.hidden_channels, num_heads, dropout=dropout)
         self.drug_norm = LayerNorm(out_channels)
         self.prot_norm = LayerNorm(out_channels)
-        self.drug_pool = SAGPooling(out_channels, min_score=-1)
-        # self.drug_pool = GATConv(out_channels, out_channels//num_heads, num_heads)
+        self.drug_pool = GATConv(out_channels, out_channels//num_heads, num_heads)
         self.prot_pool = SAGPooling(out_channels, min_score=-1)
+        # self.prot_pool = GATConv(out_channels, out_channels//num_heads, num_heads)
 
     def forward(self, atom_x, atom_edge_index, bond_x, atom_batch, \
                 aa_x, aa_edge_index, aa_edge_attr, aa_batch, m2p_edge_index):
@@ -184,10 +184,10 @@ class HDNBlock(nn.Module):
         aa_x_tmp = torch.cat([aa_intra_x, aa_inter_x], -1)
         aa_x = F.elu(self.prot_norm(aa_x_tmp, aa_batch))
 
-        atom_x, _, _, atom_batch, _, _ = self.drug_pool(atom_x, atom_edge_index, batch=atom_batch)
-        # atom_x = self.drug_pool(atom_x, atom_edge_index, bond_x)
+        atom_x = self.drug_pool(atom_x, atom_edge_index, bond_x)
         aa_x, _, _, aa_batch, _, _ = self.prot_pool(aa_x, aa_edge_index, edge_attr=aa_edge_attr, batch=aa_batch)
         # aa_x, aa_edge_index, aa_edge_attr, aa_batch, _, _ = self.prot_pool(aa_x, aa_edge_index, edge_attr=aa_edge_attr, batch=aa_batch)
+        # aa_x = self.prot_pool(aa_x, aa_edge_index, aa_edge_attr)
         atom_x = F.dropout(atom_x_res+F.elu(atom_x), 0.1, self.training)
         aa_x = F.dropout(aa_x_res+F.elu(aa_x), 0.1, self.training)
         drug_global_repr = global_add_pool(atom_x, atom_batch)
@@ -210,6 +210,7 @@ class HDNDTI(nn.Module):
         # MOLECULE IN FEAT
         self.atom_type_encoder = Embedding(20, self.hidden_channels)
         self.atom_feat_encoder = MLP([self.drug_in_channels, self.hidden_channels * 2, self.hidden_channels], out_norm=True) 
+        self.bond_encoder = Embedding(10, self.hidden_channels)
 
         # PROTEIN IN FEAT
         self.prot_evo = MLP([self.prot_evo_in_channels, self.hidden_channels * 2, self.hidden_channels], out_norm=True) 
@@ -237,6 +238,7 @@ class HDNDTI(nn.Module):
 
         # MOLECULE Featurize
         atom_x = self.atom_type_encoder(atom_x.squeeze()) + self.atom_feat_encoder(atom_x_feat)
+        bond_x = self.bond_encoder(bond_x)
                 
         # PROTEIN Featurize
         aa_x = self.prot_aa(aa_x) + self.prot_evo(aa_evo_x)

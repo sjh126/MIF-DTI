@@ -2,6 +2,7 @@
 
 import os
 import random
+import joblib
 
 import numpy as np
 import torch
@@ -335,25 +336,25 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
     print('Number of Test set: {}'.format(len(test_data_list)))
 
     '''Data Preparation'''
-    protein_path = f'./DataSets/Preprocessed/{DATASET}-protein.pt'
+    protein_path = f'./DataSets/Preprocessed/{DATASET}-protein.pkl'
     if os.path.exists(protein_path):
         print('Loading Protein Graph data...')
-        protein_dict = torch.load(protein_path)
+        protein_dict = joblib.load(protein_path)
     else:
         print('Initialising Protein Sequence to Protein Graph...')
         protein_seqs = list(set([item.split(' ')[-2] for item in data_list]))
         protein_dict = protein_init(protein_seqs)
-        torch.save(protein_dict,protein_path)
+        joblib.dump(protein_dict,protein_path)
 
-    ligand_path = f'./DataSets/Preprocessed/{DATASET}-ligand-hi.pt'
+    ligand_path = f'./DataSets/Preprocessed/{DATASET}-ligand-hi.pkl'
     if os.path.exists(ligand_path):
         print('Loading Ligand Graph data...')
-        ligand_dict = torch.load(ligand_path)
+        ligand_dict = joblib.load(ligand_path)
     else:
         print('Initialising Ligand SMILES to Ligand Graph...')
         ligand_smiles = list(set([item.split(' ')[-3] for item in data_list]))
         ligand_dict = ligand_init(ligand_smiles, mode='BRICS')
-        torch.save(ligand_dict,ligand_path)
+        joblib.dump(ligand_dict,ligand_path)
 
     torch.cuda.empty_cache()
 

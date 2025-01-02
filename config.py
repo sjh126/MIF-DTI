@@ -20,6 +20,6 @@ class hyperparameter():
         self.embed_dim = 64
         self.protein_kernel = [4, 8, 12]
         self.drug_kernel = [4, 6, 8]
-        self.conv = 40
+        self.conv = 50
         self.char_dim = 64
         self.loss_epsilon = 1

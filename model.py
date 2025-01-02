@@ -19,7 +19,7 @@ from torch_geometric.nn import (
                                 LayerNorm,
                                 global_add_pool
                                 )
-
+from config import hyperparameter
 
 class MCANet(nn.Module):
     def __init__(self, hp,
@@ -87,7 +87,7 @@ class MCANet(nn.Module):
         self.fc3 = nn.Linear(1024, 512)
         self.out = nn.Linear(512, 2)
 
-    def forward(self, drug, protein):
+    def encode(self, drug, protein):
         # [B, F_O] -> [B, F_O, D_E]
         # [B, T_O] -> [B, T_O, D_E]
         drugembed = self.drug_embed(drug)
@@ -124,6 +124,10 @@ class MCANet(nn.Module):
         drugConv = self.Drug_max_pool(drugConv).squeeze(2)
         proteinConv = self.Protein_max_pool(proteinConv).squeeze(2)
 
+        return drugConv, proteinConv
+
+    def forward(self, drug, protein):
+        drugConv, proteinConv = self.encode(drug, protein)
         pair = torch.cat([drugConv, proteinConv], dim=1)
         pair = self.dropout1(pair)
         fully1 = self.leaky_relu(self.fc1(pair))
@@ -217,20 +221,18 @@ class HDNDTI(nn.Module):
         self.prot_aa = MLP([self.prot_in_channels, self.hidden_channels * 2, self.hidden_channels], out_norm=True) 
 
         # ENCODER
-        # self.drug_convs = nn.ModuleList([HDN_conv_block() for _ in range(depth)])
-        # self.prot_convs = nn.ModuleList([HDN_conv_block() for _ in range(depth)])
         self.blocks = nn.ModuleList([HDNBlock() for _ in range(depth)])
+        self.seq_encoder = MCANet(hyperparameter())
 
-        self.attn = RESCAL(self.hidden_channels, self.depth)
-        # self.attn = AttentionLayer(self.hidden_channels)
+        self.attn = RESCAL(self.hidden_channels, self.depth+1)
 
         self.to(device)
 
     def forward(self,
                 # Molecule
-                atom_x, atom_x_feat, atom_edge_index, bond_x, mol_node_levels,
+                atom_x, atom_x_feat, smiles_x, atom_edge_index, bond_x, mol_node_levels,
                 # Protein (amino acid)
-                aa_x, aa_evo_x, aa_edge_index, aa_edge_weight,
+                aa_x, aa_evo_x, seq_x, aa_edge_index, aa_edge_weight,
                 # Batch
                 atom_batch, aa_batch,
                 # Bi Graph
@@ -260,6 +262,12 @@ class HDNDTI(nn.Module):
             drug_global_repr = atom_x[mol_node_levels==2]
             drug_repr.append(drug_global_repr)
             prot_repr.append(prot_global_repr)
+
+        # Sequence Encoding
+        drug_smiles_repr, prot_seq_repr = self.seq_encoder.encode(smiles_x, seq_x)
+        drug_repr.append(drug_smiles_repr)
+        prot_repr.append(prot_seq_repr)
+
         drug_repr = torch.stack(drug_repr, dim=-2)
         prot_repr = torch.stack(prot_repr, dim=-2)
 

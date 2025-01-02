@@ -5,6 +5,7 @@ from torch_geometric.data import Data
 import pickle
 import torch.utils.data
 import numpy as np
+from utils.DataSetsFunction import label_sequence, label_smiles
 
 
 def get_m2p_edge(mol_x, prot_x, mol_node_level=None):
@@ -20,7 +21,7 @@ def get_m2p_edge(mol_x, prot_x, mol_node_level=None):
     return edge_list
 
 class ProteinMoleculeDataset(Dataset):
-    def __init__(self, sequence_data, mol_obj, prot_obj, device='cpu', cache_transform=True):
+    def __init__(self, sequence_data, mol_obj, prot_obj, device='cpu'):
         super(ProteinMoleculeDataset, self).__init__()
 
         if isinstance(sequence_data,list):
@@ -47,25 +48,25 @@ class ProteinMoleculeDataset(Dataset):
             raise Exception("provide dict mol object or pickle path")
 
         self.device = device
-        self.cache_transform = cache_transform
 
-        if self.cache_transform:
-            for _, v in self.mols.items():
-                v['atom_idx'] = v['atom_idx'].long().view(-1, 1)
-                v['atom_feature'] = v['atom_feature'].float()
-                adj = v['bond_feature'].long()
-                mol_edge_index =  adj.nonzero(as_tuple=False).t().contiguous()
-                v['atom_edge_index'] = mol_edge_index
-                v['atom_edge_attr'] = adj[mol_edge_index[0], mol_edge_index[1]].long()
-                v['atom_num_nodes'] = v['atom_idx'].shape[0]
+        for _, v in self.mols.items():
+            v['atom_idx'] = v['atom_idx'].long().view(-1, 1)
+            v['atom_feature'] = v['atom_feature'].float()
+            adj = v['bond_feature'].long()
+            mol_edge_index =  adj.nonzero(as_tuple=False).t().contiguous()
+            v['atom_edge_index'] = mol_edge_index
+            v['atom_edge_attr'] = adj[mol_edge_index[0], mol_edge_index[1]].long()
+            v['atom_num_nodes'] = v['atom_idx'].shape[0]
+            v['smiles_x'] = torch.tensor(label_smiles(v['smiles'])).reshape(1, -1)
 
 
-            for _, v in self.prots.items():
-                v['seq_feat'] = v['seq_feat'].float()
-                v['token_representation'] = v['token_representation'].float()
-                v['num_nodes'] = len(v['seq'])
-                v['node_pos'] = torch.arange(len(v['seq'])).reshape(-1,1)
-                v['edge_weight'] = v['edge_weight'].float()
+        for _, v in self.prots.items():
+            v['seq_feat'] = v['seq_feat'].float()
+            v['token_representation'] = v['token_representation'].float()
+            v['num_nodes'] = len(v['seq'])
+            v['node_pos'] = torch.arange(len(v['seq'])).reshape(-1,1)
+            v['edge_weight'] = v['edge_weight'].float()
+            v['seq_x'] = torch.tensor(label_sequence(prot['seq'])).reshape(1, -1)
 
     def get(self, index):
         return self.__getitem__(index)
@@ -85,48 +86,30 @@ class ProteinMoleculeDataset(Dataset):
         mol = self.mols[mol_key]
         prot = self.prots[prot_key]
         
-        ## PROT
-        if self.cache_transform:
-            ## atom
-            mol_x = mol['atom_idx']
-            mol_x_feat = mol['atom_feature']
-            mol_edge_index  = mol['atom_edge_index']
-            mol_edge_attr = mol['atom_edge_attr']
-            mol_num_nodes = mol['atom_num_nodes']
+        ## atom
+        mol_x = mol['atom_idx']
+        mol_x_feat = mol['atom_feature']
+        mol_edge_index  = mol['atom_edge_index']
+        mol_edge_attr = mol['atom_edge_attr']
+        mol_num_nodes = mol['atom_num_nodes']
+        mol_smiles_x = mol['smiles_x']
 
-            ## Prot
-            prot_seq = prot['seq']
-            prot_node_aa = prot['seq_feat']
-            prot_node_evo = prot['token_representation']
-            prot_num_nodes = prot['num_nodes']
-            prot_node_pos = prot['node_pos']
-            prot_edge_index = prot['edge_index']
-            prot_edge_weight = prot['edge_weight']
-        else:
-            # MOL
-            mol_x = mol['atom_idx'].long().view(-1, 1)
-            mol_x_feat = mol['atom_feature'].float()
-            adj = mol['bond_feature'].long()
-            mol_edge_index = adj.nonzero(as_tuple=False).t().contiguous()
-            mol_edge_attr = adj[mol_edge_index[0], mol_edge_index[1]].long()
-            mol_num_nodes = mol_x.shape[0]
-
-
-
-            prot_seq = prot['seq']
-            prot_node_aa = prot['seq_feat'].float()
-            prot_node_evo = prot['token_representation'].float()
-            prot_num_nodes = len(prot['seq'])
-            prot_node_pos = torch.arange(len(prot['seq'])).reshape(-1,1)
-            prot_edge_index = prot['edge_index']
-            prot_edge_weight = prot['edge_weight'].float()
+        ## Prot
+        prot_seq = prot['seq']
+        prot_seq_x = prot['seq_x']
+        prot_node_aa = prot['seq_feat']
+        prot_node_evo = prot['token_representation']
+        prot_num_nodes = prot['num_nodes']
+        prot_node_pos = prot['node_pos']
+        prot_edge_index = prot['edge_index']
+        prot_edge_weight = prot['edge_weight']
 
         out = MultiGraphData(
                 ## MOLECULE
-                mol_x=mol_x, mol_x_feat=mol_x_feat, mol_edge_index=mol_edge_index,
+                mol_x=mol_x, mol_smiles_x=mol_smiles_x, mol_x_feat=mol_x_feat, mol_edge_index=mol_edge_index,
                 mol_edge_attr=mol_edge_attr, mol_num_nodes= mol_num_nodes, mol_node_levels=mol['node_levels'],
                 ## PROTEIN
-                prot_node_aa=prot_node_aa, prot_node_evo=prot_node_evo,
+                prot_node_aa=prot_node_aa, prot_node_evo=prot_node_evo, prot_seq_x=prot_seq_x,
                 prot_node_pos=prot_node_pos, prot_seq=prot_seq,
                 prot_edge_index=prot_edge_index, prot_edge_weight=prot_edge_weight,
                 prot_num_nodes=prot_num_nodes,
@@ -203,9 +186,7 @@ class MultiGraphData(Data):
         elif key == 'prot_struc_edge_index':
             return self.prot_node_aa.size(0)
         elif key == 'm2p_edge_index':
-             return torch.tensor([[self.mol_x.size(0)], [self.prot_node_aa.size(0)]])
-        # elif key == 'edge_index_p2m':
-        #     return torch.tensor([[self.prot_node_s.size(0)],[self.mol_x.size(0)]])
+            return torch.tensor([[self.mol_x.size(0)], [self.prot_node_aa.size(0)]])
         else:
             return super(MultiGraphData, self).__inc__(key, item, *args)
 

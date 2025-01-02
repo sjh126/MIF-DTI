@@ -422,8 +422,8 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
                 optimizer.zero_grad()
 
                 data = data.to(device)
-                predicted_y= model(data.mol_x, data.mol_x_feat, data.mol_edge_index, data.mol_edge_attr, data.mol_node_levels, \
-                      data.prot_node_aa, data.prot_node_evo, data.prot_edge_index, data.prot_edge_weight, \
+                predicted_y= model(data.mol_x, data.mol_x_feat, data.mol_smiles_x, data.mol_edge_index, data.mol_edge_attr, data.mol_node_levels, \
+                      data.prot_node_aa, data.prot_node_evo, data.prot_seq_x, data.prot_edge_index, data.prot_edge_weight, \
                         data.mol_x_batch, data.prot_node_aa_batch, data.m2p_edge_index)
                 train_loss = Loss(predicted_y, data.cls_y)
                 train_losses_in_epoch.append(train_loss.item())
@@ -440,8 +440,8 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
                 for data in valid_loader:
 
                     data = data.to(device)
-                    valid_scores = model(data.mol_x, data.mol_x_feat, data.mol_edge_index, data.mol_edge_attr, data.mol_node_levels, \
-                      data.prot_node_aa, data.prot_node_evo, data.prot_edge_index, data.prot_edge_weight, \
+                    valid_scores = model(data.mol_x, data.mol_x_feat, data.mol_smiles_x, data.mol_edge_index, data.mol_edge_attr, data.mol_node_levels, \
+                      data.prot_node_aa, data.prot_node_evo, data.prot_seq_x, data.prot_edge_index, data.prot_edge_weight, \
                         data.mol_x_batch, data.prot_node_aa_batch, data.m2p_edge_index)
                     
                     valid_labels = data.cls_y

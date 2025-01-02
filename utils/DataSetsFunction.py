@@ -20,14 +20,14 @@ CHARPROTSET = {"A": 1, "C": 2, "B": 3, "E": 4, "D": 5, "G": 6,
 CHARPROTLEN = 25
 
 
-def label_smiles(line, smi_ch_ind, MAX_SMI_LEN=100):
+def label_smiles(line, smi_ch_ind=CHARISOSMISET, MAX_SMI_LEN=100):
     X = np.zeros(MAX_SMI_LEN, dtype=np.int64())
     for i, ch in enumerate(line[:MAX_SMI_LEN]):
         X[i] = smi_ch_ind[ch]
     return X
 
 
-def label_sequence(line, smi_ch_ind, MAX_SEQ_LEN=1000):
+def label_sequence(line, smi_ch_ind=CHARPROTSET, MAX_SEQ_LEN=1000):
     X = np.zeros(MAX_SEQ_LEN, np.int64())
     for i, ch in enumerate(line[:MAX_SEQ_LEN]):
         X[i] = smi_ch_ind[ch]

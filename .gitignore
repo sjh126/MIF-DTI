@@ -7,3 +7,7 @@ demo*
 
 log/*
 .vscode/
+
+*.pdb
+*.zip
+*.ipynb

@@ -201,7 +201,7 @@ class HDNBlock(nn.Module):
 
 
 class HDNDTI(nn.Module):
-    def __init__(self, depth=4, device='cuda:0'):
+    def __init__(self, depth=3, device='cuda:0'):
         super(HDNDTI, self).__init__()
 
         self.drug_in_channels = 43
@@ -228,15 +228,18 @@ class HDNDTI(nn.Module):
 
         self.to(device)
 
-    def forward(self,
-                # Molecule
-                atom_x, atom_x_feat, smiles_x, atom_edge_index, bond_x, mol_node_levels,
-                # Protein (amino acid)
-                aa_x, aa_evo_x, seq_x, aa_edge_index, aa_edge_weight,
-                # Batch
-                atom_batch, aa_batch,
-                # Bi Graph
-                m2p_edge_index):
+    def forward(self,data):
+
+        # Molecule
+        atom_x, atom_x_feat, smiles_x, atom_edge_index, bond_x, mol_node_levels = \
+            data.mol_x, data.mol_x_feat, data.mol_smiles_x, data.mol_edge_index, data.mol_edge_attr, data.mol_node_levels
+        # Protein (amino acid)
+        aa_x, aa_evo_x, seq_x, aa_edge_index, aa_edge_weight = \
+            data.prot_node_aa, data.prot_node_evo, data.prot_seq_x, data.prot_edge_index, data.prot_edge_weight, \
+        # Batch
+        atom_batch, aa_batch = data.mol_x_batch, data.prot_node_aa_batch
+        # Bi Graph
+        m2p_edge_index = data.m2p_edge_index
 
         # MOLECULE Featurize
         atom_x = self.atom_type_encoder(atom_x.squeeze()) + self.atom_feat_encoder(atom_x_feat)
@@ -250,15 +253,10 @@ class HDNDTI(nn.Module):
         drug_repr = []
         prot_repr = []
         for i in range(self.depth):
-            # atom_x, drug_global_repr = self.drug_convs[i](atom_x, atom_edge_index, drug_batch)
-            # aa_x, prot_global_repr = self.prot_convs[i](aa_x, aa_edge_index, prot_batch, aa_edge_weight)
             out = self.blocks[i](atom_x, atom_edge_index, bond_x, atom_batch, \
                                  aa_x, aa_edge_index, aa_edge_attr, aa_batch, \
                                  m2p_edge_index)
             atom_x, aa_x, drug_global_repr, prot_global_repr = out
-            # atom_x, drug_global_repr, prot_global_repr = out[0], out[2], out[3]
-            # aa_x, aa_edge_index, aa_edge_attr, aa_batch = out[1]
-            # m2p_edge_index = get_m2p_edge_from_batch(atom_batch, aa_batch, mol_node_levels)
             drug_global_repr = atom_x[mol_node_levels==2]
             drug_repr.append(drug_global_repr)
             prot_repr.append(prot_global_repr)

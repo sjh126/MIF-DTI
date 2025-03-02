@@ -9,7 +9,7 @@ parser = argparse.ArgumentParser(
     epilog='Model config set by config.py')
 
 parser.add_argument('dataSetName', choices=[
-                    "DrugBank", "KIBA", "Davis", "Enzyme", "GPCRs", "ion_channel"], help='Enter which dataset to use for the experiment')
+                    "DrugBank", "KIBA", "Davis", "Enzyme", "GPCRs", "ion_channel",'human','BIOSNAP'], help='Enter which dataset to use for the experiment')
 parser.add_argument('-m', '--model', choices=['MCANet', 'MCANet-B', 'onlyPolyLoss', 'onlyMCA', 'HDN-DTI'],
                     default='HDN-DTI', help='Which model to use, \"HDN-DTI\" is used by default')
 parser.add_argument('-s', '--seed', type=int, default=114514,

@@ -40,7 +40,6 @@ def run_model(SEED, DATASET, MODEL, K_Fold, LOSS):
     hp = hyperparameter()
 
     '''load dataset from text file'''
-    assert DATASET in ["DrugBank", "KIBA", "Davis", "Enzyme", "GPCRs", "ion_channel"]
     print("Train in " + DATASET)
     print("load data")
     dir_input = ('./DataSets/{}.txt'.format(DATASET))
@@ -204,7 +203,7 @@ def run_model(SEED, DATASET, MODEL, K_Fold, LOSS):
 
         '''load best checkpoint'''
         model.load_state_dict(torch.load(
-            early_stopping.savepath + '/valid_best_checkpoint.pth'))
+            early_stopping.savepath + f'/valid_best_checkpoint-{model.device}.pth'))
 
         '''test model'''
         trainset_test_stable_results, _, _, _, _, _ = test_model(
@@ -308,7 +307,6 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
     hp = hyperparameter()
 
     '''load dataset from text file'''
-    assert DATASET in ["DrugBank", "KIBA", "Davis", "Enzyme", "GPCRs", "ion_channel"]
     print("Train in " + DATASET)
     print("load data")
     dir_input = ('./DataSets/{}.txt'.format(DATASET))

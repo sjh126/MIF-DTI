@@ -86,6 +86,7 @@ class MCANet(nn.Module):
         self.fc2 = nn.Linear(1024, 1024)
         self.fc3 = nn.Linear(1024, 512)
         self.out = nn.Linear(512, 2)
+        self.device = torch.device('cuda:1')
 
     def encode(self, drug, protein):
         # [B, F_O] -> [B, F_O, D_E]

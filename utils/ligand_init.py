@@ -541,7 +541,11 @@ def smiles2graph_BRICS(m_str):
     num_atoms = atom_feature.shape[0]
     num_cliques = len(cliques)
     if num_cliques==0:
-        return smiles2graph_junction_tree(m_str)
+        try:
+            return smiles2graph_junction_tree(m_str)
+        except Exception or RuntimeError:
+            print(f'illed SMILES: {m_str}')
+            return None
     else:
         c_degree = [len(c)+1 for c in cliques]
         c_Hs = [0] * num_cliques

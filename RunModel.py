@@ -392,11 +392,11 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
 
         scheduler = optim.lr_scheduler.CyclicLR(optimizer, base_lr=hp.Learning_rate, max_lr=hp.Learning_rate*10, cycle_momentum=False,
                                                 step_size_up=train_size // hp.Batch_size)
-        if LOSS == 'PolyLoss':
-            Loss = PolyLoss(weight_loss=weight_loss,
-                            DEVICE=device, epsilon=hp.loss_epsilon)
-        else:
-            Loss = CELoss(weight_CE=weight_loss, DEVICE=device)
+        # if LOSS == 'PolyLoss':
+        #     Loss = PolyLoss(weight_loss=weight_loss,
+        #                     DEVICE=device, epsilon=hp.loss_epsilon)
+        # else:
+        Loss = CELoss(weight_CE=weight_loss, DEVICE=device)
 
         """Output files"""
         save_path = "./" + DATASET + "/{}".format(i_fold+1)

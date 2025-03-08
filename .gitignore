@@ -1,6 +1,7 @@
 *.pyc
 *.pth
 *.txt
+!requirements.txt
 *.pt
 *.pkl
 demo*
@@ -14,3 +15,4 @@ log/*
 
 *PDB_AF2*
 *POCKETS*
+*Preprocessed*

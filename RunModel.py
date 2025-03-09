@@ -473,7 +473,7 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
             early_stopping(Accuracy_dev, model, epoch)
 
         '''load best checkpoint'''
-        model.load_state_dict(torch.load(early_stopping.savepath + f'/valid_best_checkpoint-{device}.pth'))
+        model.load_state_dict(torch.load(early_stopping.savepath + f'/valid_best_checkpoint-{device}.pth', weights_only=True))
 
         '''test model'''
         trainset_test_stable_results, _, _, _, _, _ = test_model(

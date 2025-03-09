@@ -200,6 +200,42 @@ class HDNBlock(nn.Module):
 
         return atom_x, aa_x, drug_global_repr, prot_global_repr
 
+class HDNBlock_1D(nn.Module):
+    def __init__(self, input_dim=200, conv=50, drug_kernel=[4, 6, 8], prot_kernel=[4, 8, 12]):
+        super(HDNBlock_1D, self).__init__()
+        self.attention_dim = conv * 4
+        self.mix_attention_head = 5
+
+        self.Drug_CNNs = get_CNNs(input_dim, conv, drug_kernel)
+        self.Protein_CNNs = get_CNNs(input_dim, conv, prot_kernel)
+
+        self.mix_attention_layer = nn.MultiheadAttention(self.attention_dim, self.mix_attention_head, batch_first=True, dropout=0.3)
+
+    def forward(self, drugembed, proteinembed):
+
+        # [batch_size, seq_len, embed_dim] -> [batch_size, embed_dim, seq_len] 
+        drugembed = drugembed.permute(0, 2, 1)
+        proteinembed = proteinembed.permute(0, 2, 1)
+
+        drugConv = self.Drug_CNNs(drugembed)
+        proteinConv = self.Protein_CNNs(proteinembed)
+
+        # [batch_size, embed_dim, seq_len] -> [batch_size, seq_len, embed_dim]
+        drugConv = drugConv.permute(0, 2, 1)
+        proteinConv = proteinConv.permute(0, 2, 1)
+
+        # cross Attention
+        drug_att, _ = self.mix_attention_layer(drugConv, proteinConv, proteinConv)
+        protein_att, _ = self.mix_attention_layer(proteinConv, drugConv, drugConv)
+
+        drugConv = drugConv * 0.5 + drug_att * 0.5
+        proteinConv = proteinConv * 0.5 + protein_att * 0.5
+
+        drugPool, _ = torch.max(drugConv, dim=1)
+        proteinPool, _ = torch.max(proteinConv, dim=1)
+
+        return drugConv, proteinConv, drugPool, proteinPool
+
 
 class HDNDTI(nn.Module):
     def __init__(self, depth=3, device='cuda:0'):
@@ -225,7 +261,11 @@ class HDNDTI(nn.Module):
         self.blocks = nn.ModuleList([HDNBlock() for _ in range(depth)])
         self.seq_encoder = MCANet(hyperparameter())
 
-        self.attn = RESCAL(self.hidden_channels, self.depth+1)
+        self.drug_seq_emb = nn.Embedding(65, self.hidden_channels, padding_idx=0)
+        self.prot_seq_emb = nn.Embedding(26, self.hidden_channels, padding_idx=0)
+        self.blocks_1D = nn.ModuleList([HDNBlock_1D() for _ in range(depth)])
+
+        self.attn = RESCAL(self.hidden_channels, self.depth*2)
 
         self.to(device)
 
@@ -262,10 +302,18 @@ class HDNDTI(nn.Module):
             drug_repr.append(drug_global_repr)
             prot_repr.append(prot_global_repr)
 
-        # Sequence Encoding
-        drug_smiles_repr, prot_seq_repr = self.seq_encoder.encode(smiles_x, seq_x)
-        drug_repr.append(drug_smiles_repr)
-        prot_repr.append(prot_seq_repr)
+        # # Sequence Encoding
+        # drug_smiles_repr, prot_seq_repr = self.seq_encoder.encode(smiles_x, seq_x)
+        # drug_repr.append(drug_smiles_repr)
+        # prot_repr.append(prot_seq_repr)
+
+        atom_x_seq = self.drug_seq_emb(smiles_x)
+        aa_x_seq = self.prot_seq_emb(seq_x)
+        for i in range(self.depth):
+            out_seq = self.blocks_1D[i](atom_x_seq, aa_x_seq)
+            atom_x_seq, aa_x_seq, drug_seq_pool, prot_seq_pool = out_seq
+            drug_repr.append(drug_seq_pool)
+            prot_repr.append(prot_seq_pool)
 
         drug_repr = torch.stack(drug_repr, dim=-2)
         prot_repr = torch.stack(prot_repr, dim=-2)

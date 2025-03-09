@@ -139,3 +139,13 @@ def rbf(D, D_min=0., D_max=1., D_count=16, device='cpu'):
 
     RBF = torch.exp(-((D_expand - D_mu) / D_sigma) ** 2)
     return RBF
+
+def get_CNNs(input_dim, conv_dim, kernel):
+    return nn.Sequential(
+            nn.Conv1d(in_channels=input_dim, out_channels=conv_dim, kernel_size=kernel[0]),
+            nn.ReLU(),
+            nn.Conv1d(in_channels=conv_dim, out_channels=conv_dim*2, kernel_size=kernel[1]),
+            nn.ReLU(),
+            nn.Conv1d(in_channels=conv_dim*2, out_channels=conv_dim*4, kernel_size=kernel[2]),
+            nn.ReLU(),
+        )

@@ -57,7 +57,7 @@ class ProteinMoleculeDataset(Dataset):
             v['atom_edge_index'] = mol_edge_index
             v['atom_edge_attr'] = adj[mol_edge_index[0], mol_edge_index[1]].long()
             v['atom_num_nodes'] = v['atom_idx'].shape[0]
-            v['smiles_x'] = torch.tensor(label_smiles(v['smiles'])).reshape(1, -1)
+            v['smiles_x'] = torch.tensor(label_smiles(v['smiles'], MAX_SMI_LEN=200)).reshape(1, -1)
 
 
         for _, v in self.prots.items():
@@ -66,7 +66,7 @@ class ProteinMoleculeDataset(Dataset):
             v['num_nodes'] = len(v['seq'])
             v['node_pos'] = torch.arange(len(v['seq'])).reshape(-1,1)
             v['edge_weight'] = v['edge_weight'].float()
-            v['seq_x'] = torch.tensor(label_sequence(v['seq'])).reshape(1, -1)
+            v['seq_x'] = torch.tensor(label_sequence(v['seq'], MAX_SEQ_LEN=1500)).reshape(1, -1)
 
     def get(self, index):
         return self.__getitem__(index)

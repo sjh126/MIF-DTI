@@ -2,7 +2,7 @@
 
 # 获取当前时间，格式为YYYY-MM-DD_HH-MM-SS
 current_time=$(date +"%Y-%m-%d_%H-%M-%S")
-comment="MIF-dot-BCELoss-conv3-gdn3"
+comment="MIF-DrugBank"
 file_name="log/$current_time-$comment.log"
 
 # 运行nohup命令，输出日志到log目录下，文件名为当前时间

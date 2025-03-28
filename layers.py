@@ -73,24 +73,51 @@ class RESCAL(nn.Module):
     def __init__(self, n_features, depth):
         super().__init__()
         self.n_features = n_features
-        # self.co_attn = CoAttentionLayer(n_features)
+        self.co_attn = CoAttentionLayer(n_features)
         self.mlp = nn.Sequential(
             nn.Linear(depth*depth, 2)
         )
 
-    def forward(self, heads, tails):
-        # alpha_scores = self.co_attn(heads, tails)
+    def forward(self, heads, tails, co_attn=True):
+        alpha_scores = self.co_attn(heads, tails)
         heads = F.normalize(heads, dim=-1)
         tails = F.normalize(tails, dim=-1)
         scores = (heads @ tails.transpose(-2, -1))
-        # scores = scores.sum(dim=(-2, -1))
-        # return  torch.stack((1-scores, scores), dim=-1)
+        if co_attn:
+         scores *= alpha_scores
         scores = self.mlp(scores.reshape(scores.shape[0], -1))
         return scores
     
     def __repr__(self):
         return f"{self.__class__.__name__}({self.n_rels}, {self.rel_emb.weight.shape})"
     
+class PoolAttention(nn.Module):
+    """利用Attention进行多模态融合, `with-attn`变体的关键组件"""
+
+    def __init__(self, n_features, num_neads=4):
+        super().__init__()
+        self.attn = nn.MultiheadAttention(n_features, num_heads=num_neads, batch_first=True)
+        self.drug_norm = nn.LayerNorm(n_features)
+        self.prot_norm = nn.LayerNorm(n_features)
+        self.mlp = nn.Sequential(
+            nn.Linear(n_features*2, n_features*2),
+            nn.ReLU(),
+            nn.Dropout(),
+            nn.Linear(n_features*2, n_features*1),
+            nn.ReLU(),
+            nn.Dropout(),
+            nn.Linear(n_features*1, 2),
+        )
+
+    def forward(self, drug, prot):
+        drug = self.drug_norm(drug)
+        prot = self.prot_norm(prot)
+        drug_attn = self.attn(drug, prot, prot)[0]
+        prot_attn = self.attn(prot, drug, drug)[0]
+        drug_pool = torch.max((drug+drug_attn)/2, dim=1)[0]
+        prot_pool = torch.max((prot+prot_attn)/2, dim=1)[0]
+        scores = self.mlp(torch.cat([drug_pool, prot_pool], dim=-1))
+        return scores
 
 class AttentionLayer(nn.Module):
     def __init__(self, n_features, heads=4):

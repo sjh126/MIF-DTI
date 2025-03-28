@@ -12,6 +12,7 @@ log/*
 *.pdb
 *.zip
 *.ipynb
+figures/
 
 *PDB_AF2*
 *POCKETS*

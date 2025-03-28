@@ -1,7 +1,7 @@
 import argparse
 import torch
 from RunModel import run_model, ensemble_run_model, run_HDN_model
-from model import MCANet, onlyPolyLoss, HDNDTI
+from model import MCANet, HDNDTI
 
 parser = argparse.ArgumentParser(
     prog='MCANet',
@@ -28,9 +28,6 @@ if args.model == 'MCANet':
 if args.model == 'onlyMCA':
     run_model(SEED=args.seed, DATASET=args.dataSetName,
               MODEL=MCANet, K_Fold=args.fold, LOSS='CrossEntropy')
-if args.model == 'onlyPolyLoss':
-    run_model(SEED=args.seed, DATASET=args.dataSetName,
-              MODEL=onlyPolyLoss, K_Fold=args.fold, LOSS='PolyLoss')
 if args.model == 'MCANet-B':
     ensemble_run_model(SEED=args.seed, DATASET=args.dataSetName, K_Fold=args.fold)
 if args.model == 'HDN-DTI':

@@ -333,6 +333,8 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
     print('Number of Train&Val set: {}'.format(len(train_data_list)))
     print('Number of Test set: {}'.format(len(test_data_list)))
 
+    os.makedirs('./DataSets/Preprocessed/', exist_ok=True)
+    
     '''Data Preparation'''
     protein_path = f'./DataSets/Preprocessed/{DATASET}-protein.pkl'
     if os.path.exists(protein_path):

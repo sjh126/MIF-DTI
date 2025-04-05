@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# 如果log文件夹不存在，则创建
+if [ ! -d "log" ]; then
+    mkdir log
+fi
+
 # 获取当前时间，格式为YYYY-MM-DD_HH-MM-SS
 current_time=$(date +"%Y-%m-%d_%H-%M-%S")
 comment="MIF-DrugBank"

@@ -20,7 +20,7 @@ def protein_init(seqs):
     model, alphabet = esm.pretrained.load_model_and_alphabet(model_location)
     model.eval()
     if torch.cuda.is_available():
-        model = model.cuda(1)
+        model = model.cuda()
     batch_converter = alphabet.get_batch_converter()
 
     for seq in tqdm(seqs):

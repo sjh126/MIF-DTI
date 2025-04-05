@@ -73,18 +73,16 @@ class RESCAL(nn.Module):
     def __init__(self, n_features, depth):
         super().__init__()
         self.n_features = n_features
-        self.co_attn = CoAttentionLayer(n_features)
+        # self.co_attn = CoAttentionLayer(n_features)
         self.mlp = nn.Sequential(
             nn.Linear(depth*depth, 2)
         )
 
-    def forward(self, heads, tails, co_attn=True):
-        alpha_scores = self.co_attn(heads, tails)
+    def forward(self, heads, tails):
+        # alpha_scores = self.co_attn(heads, tails)
         heads = F.normalize(heads, dim=-1)
         tails = F.normalize(tails, dim=-1)
         scores = (heads @ tails.transpose(-2, -1))
-        if co_attn:
-         scores *= alpha_scores
         scores = self.mlp(scores.reshape(scores.shape[0], -1))
         return scores
     

@@ -320,7 +320,7 @@ class HDNDTI(nn.Module):
         prot_repr = torch.stack(prot_repr, dim=-2)
 
         # Co-attn
-        scores = self.attn(drug_repr, prot_repr, co_attn=True)
+        scores = self.attn(drug_repr, prot_repr)
 
         return scores
 

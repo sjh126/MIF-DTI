@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from config import hyperparameter
-from model import MCANet
+from model import MCANet,HDNDTI
 from utils.DataPrepare import get_kfold_data, shuffle_dataset
 from utils.DataSetsFunction import CustomDataSet, collate_fn
 from utils.EarlyStoping import EarlyStopping
@@ -333,8 +333,6 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
     print('Number of Train&Val set: {}'.format(len(train_data_list)))
     print('Number of Test set: {}'.format(len(test_data_list)))
 
-    os.makedirs('./DataSets/Preprocessed/', exist_ok=True)
-    
     '''Data Preparation'''
     protein_path = f'./DataSets/Preprocessed/{DATASET}-protein.pkl'
     if os.path.exists(protein_path):
@@ -497,3 +495,105 @@ def run_HDN_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
 
     show_result(DATASET, Accuracy_List_stable, Precision_List_stable,
                 Recall_List_stable, AUC_List_stable, AUPR_List_stable, Ensemble=False)
+    
+
+def ensemble_run_HDN_model(SEED, DATASET, K_Fold, device):
+
+    '''set random seed'''
+    random.seed(SEED)
+    torch.manual_seed(SEED)
+    torch.cuda.manual_seed_all(SEED)
+
+    '''init hyperparameters'''
+    hp = hyperparameter()
+
+    '''load dataset from text file'''
+    assert DATASET in ["DrugBank", "BIOSNAP", "Davis"]
+    print("Train in " + DATASET)
+    print("load data")
+    dir_input = ('./DataSets/{}.txt'.format(DATASET))
+    with open(dir_input, "r") as f:
+        data_list = f.read().strip().split('\n')
+    print("load finished")
+
+    '''set loss function weight'''
+    if DATASET == "Davis":
+        weight_loss = torch.FloatTensor([0.3, 0.7]).to(device)
+    elif DATASET == "KIBA":
+        weight_loss = torch.FloatTensor([0.2, 0.8]).to(device)
+    else:
+        weight_loss = None
+
+    '''shuffle data'''
+    print("data shuffle")
+    data_list = shuffle_dataset(data_list, SEED)
+
+    '''split dataset to train&validation set and test set'''
+    split_pos = len(data_list) - int(len(data_list) * 0.2)
+    test_data_list = data_list[split_pos:-1]
+    print('Number of Test set: {}'.format(len(test_data_list)))
+
+    save_path = f"./{DATASET}/ensemble"
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+        
+    '''Data Preparation'''
+    protein_path = f'./DataSets/Preprocessed/{DATASET}-protein.pkl'
+    if os.path.exists(protein_path):
+        print('Loading Protein Graph data...')
+        protein_dict = joblib.load(protein_path)
+    else:
+        print('Initialising Protein Sequence to Protein Graph...')
+        protein_seqs = list(set([item.split(' ')[-2] for item in data_list]))
+        protein_dict = protein_init(protein_seqs)
+        joblib.dump(protein_dict,protein_path)
+
+    ligand_path = f'./DataSets/Preprocessed/{DATASET}-ligand-hi.pkl'
+    if os.path.exists(ligand_path):
+        print('Loading Ligand Graph data...')
+        ligand_dict = joblib.load(ligand_path)
+    else:
+        print('Initialising Ligand SMILES to Ligand Graph...')
+        ligand_smiles = list(set([item.split(' ')[-3] for item in data_list]))
+        ligand_dict = ligand_init(ligand_smiles, mode='BRICS')
+        joblib.dump(ligand_dict,ligand_path)
+
+    torch.cuda.empty_cache()  
+    
+          
+    
+
+    test_dataset = ProteinMoleculeDataset(test_data_list, ligand_dict, protein_dict, device=device)
+    
+    # test_dataset_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=0,
+    #                                  collate_fn=collate_fn, drop_last=True)
+    test_dataset_loader = pyg_loader.DataLoader(test_dataset, batch_size=1,  shuffle=False, follow_batch=['mol_x', 'clique_x', 'prot_node_aa'], drop_last=True)
+
+    model = []
+    for i in range(K_Fold):
+        model.append(HDNDTI().to(device))
+        '''HDN-DTI K-Fold train process is necessary'''
+        try:
+            model[i].load_state_dict(torch.load(
+                f'./{DATASET}/{i+1}' + f'/valid_best_checkpoint-{device}.pth', map_location=torch.device(device)))   #加载对应权重
+        except FileNotFoundError as e:
+            print('-'* 25 + 'ERROR' + '-'*25)
+            error_msg = 'Load pretrained model error: \n' + \
+                        str(e) + \
+                        '\n' + 'HDNDTI K-Fold train process is necessary'
+            print(error_msg)
+            print('-'* 55)
+            exit(1)
+
+    Loss = PolyLoss(weight_loss=weight_loss,
+                    DEVICE=device, epsilon=hp.loss_epsilon)
+
+#   testdataset_results, Accuracy_test, Precision_test, Recall_test, AUC_test, PRC_test = test_model(
+#       model, test_dataset_loader, save_path, DATASET, Loss, device, dataset_class="Test", save=True, FOLD_NUM=K_Fold)
+    
+    testset_test_stable_results, Accuracy_test, Precision_test, Recall_test, AUC_test, PRC_test = test_model(
+            model, test_dataset_loader, save_path, DATASET, Loss, device, dataset_class="Test", FOLD_NUM=K_Fold, HDN=True)
+    
+    show_result(DATASET, Accuracy_test, Precision_test,
+                Recall_test, AUC_test, PRC_test, Ensemble=True)
+    

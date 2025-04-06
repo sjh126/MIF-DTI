@@ -1,6 +1,6 @@
 import argparse
 import torch
-from RunModel import run_model, ensemble_run_model, run_HDN_model
+from RunModel import run_model, ensemble_run_model, run_HDN_model,ensemble_run_HDN_model
 from model import MCANet, HDNDTI
 
 parser = argparse.ArgumentParser(
@@ -10,7 +10,7 @@ parser = argparse.ArgumentParser(
 
 parser.add_argument('dataSetName', choices=[
                     "DrugBank", "KIBA", "Davis", "Enzyme", "GPCRs", "ion_channel",'human','BIOSNAP'], help='Enter which dataset to use for the experiment')
-parser.add_argument('-m', '--model', choices=['MCANet', 'MCANet-B', 'onlyPolyLoss', 'onlyMCA', 'HDN-DTI'],
+parser.add_argument('-m', '--model', choices=['MCANet', 'MCANet-B', 'onlyPolyLoss', 'onlyMCA', 'HDN-DTI', 'HDN-DTI-B'],
                     default='HDN-DTI', help='Which model to use, \"HDN-DTI\" is used by default')
 parser.add_argument('-s', '--seed', type=int, default=114514,
                     help='Set the random seed, the default is 114514')
@@ -33,3 +33,5 @@ if args.model == 'MCANet-B':
 if args.model == 'HDN-DTI':
     run_HDN_model(SEED=args.seed, DATASET=args.dataSetName,
               MODEL=HDNDTI, K_Fold=args.fold, LOSS='PolyLoss', device=device)
+if args.model == 'HDN-DTI-B':
+    ensemble_run_HDN_model(SEED=args.seed, DATASET=args.dataSetName, K_Fold=args.fold, device=device)

@@ -63,15 +63,25 @@ def test_precess(MODEL, pbar, LOSS, DEVICE, FOLD_NUM):
 
 
 def test_HDN_precess(MODEL, pbar, LOSS, DEVICE, FOLD_NUM):
-    MODEL.eval()
+    if isinstance(MODEL, list):
+        for item in MODEL:
+            item.eval()
+    else:
+        MODEL.eval()
     test_losses = []
     Y, P, S = [], [], []
     with torch.no_grad():
-        for _, data in pbar:
+        for i, data in pbar:
             '''data preparation '''
             data = data.to(DEVICE)
-
-            predicted_scores = MODEL(data)
+            if isinstance(MODEL, list):
+                predicted_scores = torch.zeros(2).to(DEVICE)
+                for i in range(len(MODEL)):
+                    predicted_scores = predicted_scores + \
+                        MODEL[i](data)
+                predicted_scores = predicted_scores / FOLD_NUM
+            else:
+                predicted_scores = MODEL(data)
             labels = data.cls_y
             loss = LOSS(predicted_scores, labels)
             correct_labels = labels.to('cpu').data.numpy()
@@ -93,11 +103,11 @@ def test_HDN_precess(MODEL, pbar, LOSS, DEVICE, FOLD_NUM):
     return Y, P, test_loss, Accuracy, Precision, Recall, AUC, PRC
 
 def test_model(MODEL, dataset_loader, save_path, DATASET, LOSS, DEVICE, dataset_class="Train", save=True, FOLD_NUM=1, HDN=False):
-    # test_pbar = tqdm(
-    #     enumerate(
-    #         BackgroundGenerator(dataset_loader)),
-    #     total=len(dataset_loader))
-    test_pbar = enumerate(BackgroundGenerator(dataset_loader))
+    test_pbar = tqdm(
+        enumerate(
+            BackgroundGenerator(dataset_loader)),
+        total=len(dataset_loader))
+    #test_pbar = enumerate(BackgroundGenerator(dataset_loader))
     T, P, loss_test, Accuracy_test, Precision_test, Recall_test, AUC_test, PRC_test = \
         test_HDN_precess(MODEL, test_pbar, LOSS, DEVICE, FOLD_NUM) if HDN else test_precess(MODEL, test_pbar, LOSS, DEVICE, FOLD_NUM)
     if save:

@@ -1,12 +1,4 @@
 # -*- coding:utf-8 -*-
-'''
-Author: MrZQAQ
-Date: 2022-03-26 19:34
-LastEditTime: 2022-11-23 16:34
-LastEditors: MrZQAQ
-Description: DeepLearing Model
-FilePath: /MCANet/model.py
-'''
 
 import torch
 import torch.nn as nn
@@ -21,127 +13,9 @@ from torch_geometric.nn import (
                                 )
 from config import hyperparameter
 
-class MCANet(nn.Module):
-    def __init__(self, hp,
-                 protein_MAX_LENGH=1000,
-                 drug_MAX_LENGH=100):
-        super(MCANet, self).__init__()
-        self.dim = hp.char_dim
-        self.conv = hp.conv
-        self.drug_MAX_LENGTH = drug_MAX_LENGH
-        self.drug_kernel = hp.drug_kernel
-        self.protein_MAX_LENGTH = protein_MAX_LENGH
-        self.protein_kernel = hp.protein_kernel
-        self.drug_vocab_size = 65
-        self.protein_vocab_size = 26
-        self.attention_dim = hp.conv * 4
-        self.drug_dim_afterCNNs = self.drug_MAX_LENGTH - \
-            self.drug_kernel[0] - self.drug_kernel[1] - self.drug_kernel[2] + 3
-        self.protein_dim_afterCNNs = self.protein_MAX_LENGTH - \
-            self.protein_kernel[0] - self.protein_kernel[1] - \
-            self.protein_kernel[2] + 3
-        self.drug_attention_head = 5
-        self.protein_attention_head = 7
-        self.mix_attention_head = 5
-
-        self.drug_embed = nn.Embedding(
-            self.drug_vocab_size, self.dim, padding_idx=0)
-        self.protein_embed = nn.Embedding(
-            self.protein_vocab_size, self.dim, padding_idx=0)
-
-        self.Drug_CNNs = nn.Sequential(
-            nn.Conv1d(in_channels=self.dim, out_channels=self.conv,
-                      kernel_size=self.drug_kernel[0]),
-            nn.ReLU(),
-            nn.Conv1d(in_channels=self.conv, out_channels=self.conv * 2,
-                      kernel_size=self.drug_kernel[1]),
-            nn.ReLU(),
-            nn.Conv1d(in_channels=self.conv*2, out_channels=self.conv * 4,
-                      kernel_size=self.drug_kernel[2]),
-            nn.ReLU(),
-        )
-        self.Drug_max_pool = nn.MaxPool1d(self.drug_dim_afterCNNs)
-        self.Protein_CNNs = nn.Sequential(
-            nn.Conv1d(in_channels=self.dim, out_channels=self.conv,
-                      kernel_size=self.protein_kernel[0]),
-            nn.ReLU(),
-            nn.Conv1d(in_channels=self.conv, out_channels=self.conv * 2,
-                      kernel_size=self.protein_kernel[1]),
-            nn.ReLU(),
-            nn.Conv1d(in_channels=self.conv * 2, out_channels=self.conv * 4,
-                      kernel_size=self.protein_kernel[2]),
-            nn.ReLU(),
-        )
-
-        self.Protein_max_pool = nn.MaxPool1d(self.protein_dim_afterCNNs)
-
-        self.mix_attention_layer = nn.MultiheadAttention(
-            self.attention_dim, self.mix_attention_head)
-
-        self.dropout1 = nn.Dropout(0.1)
-        self.dropout2 = nn.Dropout(0.1)
-        self.dropout3 = nn.Dropout(0.1)
-        self.leaky_relu = nn.LeakyReLU()
-        self.fc1 = nn.Linear(self.conv*8, 1024)
-        self.fc2 = nn.Linear(1024, 1024)
-        self.fc3 = nn.Linear(1024, 512)
-        self.out = nn.Linear(512, 2)
-        self.device = torch.device('cuda:1')
-
-    def encode(self, drug, protein):
-        # [B, F_O] -> [B, F_O, D_E]
-        # [B, T_O] -> [B, T_O, D_E]
-        drugembed = self.drug_embed(drug)
-        proteinembed = self.protein_embed(protein)
-        # [B, F_O, D_E] -> [B, D_E, F_O]
-        # [B, T_O, D_E] -> [B, D_E, T_O]
-        drugembed = drugembed.permute(0, 2, 1)
-        proteinembed = proteinembed.permute(0, 2, 1)
-
-        # [B, D_E, F_O] -> [B, D_C, F_C]
-        # [B, D_E, T_O] -> [B, D_C, T_C]
-        drugConv = self.Drug_CNNs(drugembed)
-        proteinConv = self.Protein_CNNs(proteinembed)
-
-        # [B, D_C, F_C] -> [F_C, B, D_C]
-        # [B, D_C, T_C] -> [T_C, B, D_C]
-        drug_QKV = drugConv.permute(2, 0, 1)
-        protein_QKV = proteinConv.permute(2, 0, 1)
-
-        # cross Attention
-        # [F_C, B, D_C] -> [F_C, B, D_C]
-        # [T_C, B, D_C] -> [T_C, B, D_C]
-        drug_att, _ = self.mix_attention_layer(drug_QKV, protein_QKV, protein_QKV)
-        protein_att, _ = self.mix_attention_layer(protein_QKV, drug_QKV, drug_QKV)
-
-        # [F_C, B, D_C] -> [B, D_C, F_C]
-        # [T_C, B, D_C] -> [B, D_C, T_C]
-        drug_att = drug_att.permute(1, 2, 0)
-        protein_att = protein_att.permute(1, 2, 0)
-
-        drugConv = drugConv * 0.5 + drug_att * 0.5
-        proteinConv = proteinConv * 0.5 + protein_att * 0.5
-
-        drugConv = self.Drug_max_pool(drugConv).squeeze(2)
-        proteinConv = self.Protein_max_pool(proteinConv).squeeze(2)
-
-        return drugConv, proteinConv
-
-    def forward(self, drug, protein):
-        drugConv, proteinConv = self.encode(drug, protein)
-        pair = torch.cat([drugConv, proteinConv], dim=1)
-        pair = self.dropout1(pair)
-        fully1 = self.leaky_relu(self.fc1(pair))
-        fully1 = self.dropout2(fully1)
-        fully2 = self.leaky_relu(self.fc2(fully1))
-        fully2 = self.dropout3(fully2)
-        fully3 = self.leaky_relu(self.fc3(fully2))
-        predict = self.out(fully3)
-        return predict
-
-class HDN_conv_block(nn.Module):
+class MIF_conv_block(nn.Module):
     def __init__(self, in_channels=200, out_channels=200, num_heads=4, dropout=0.3):
-        super(HDN_conv_block, self).__init__()
+        super(MIF_conv_block, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.num_heads = num_heads
@@ -159,9 +33,9 @@ class HDN_conv_block(nn.Module):
         return x, global_graph_emb
 
 
-class HDNBlock(nn.Module):
+class MIFBlock(nn.Module):
     def __init__(self, in_channels=200, out_channels=200, num_heads=5, dropout=0.4):
-        super(HDNBlock, self).__init__()
+        super(MIFBlock, self).__init__()
         
         self.hidden_channels = out_channels // (num_heads*2)
         self.drug_conv = GATConv(in_channels, self.hidden_channels, num_heads, dropout=0.1)
@@ -200,9 +74,9 @@ class HDNBlock(nn.Module):
 
         return atom_x, aa_x, drug_global_repr, prot_global_repr
 
-class HDNBlock_1D(nn.Module):
+class MIFBlock_1D(nn.Module):
     def __init__(self, input_dim=200, conv=50, drug_kernel=[4, 6, 8], prot_kernel=[4, 8, 12]):
-        super(HDNBlock_1D, self).__init__()
+        super(MIFBlock_1D, self).__init__()
         self.attention_dim = conv * 4
         self.mix_attention_head = 5
 
@@ -237,9 +111,9 @@ class HDNBlock_1D(nn.Module):
         return drugConv, proteinConv, drugPool, proteinPool
 
 
-class HDNDTI(nn.Module):
+class MIFDTI(nn.Module):
     def __init__(self, depth=3, device='cuda:0'):
-        super(HDNDTI, self).__init__()
+        super(MIFDTI, self).__init__()
 
         self.drug_in_channels = 43
         self.prot_in_channels = 33
@@ -258,12 +132,11 @@ class HDNDTI(nn.Module):
         self.prot_aa = MLP([self.prot_in_channels, self.hidden_channels * 2, self.hidden_channels], out_norm=True) 
 
         # ENCODER
-        self.blocks = nn.ModuleList([HDNBlock() for _ in range(depth)])
-        self.seq_encoder = MCANet(hyperparameter())
+        self.blocks = nn.ModuleList([MIFBlock() for _ in range(depth)])
 
         self.drug_seq_emb = nn.Embedding(65, self.hidden_channels, padding_idx=0)
         self.prot_seq_emb = nn.Embedding(26, self.hidden_channels, padding_idx=0)
-        self.blocks_1D = nn.ModuleList([HDNBlock_1D() for _ in range(depth)])
+        self.blocks_1D = nn.ModuleList([MIFBlock_1D() for _ in range(depth)])
 
         self.attn = RESCAL(self.hidden_channels, self.depth*2)
         # self.attn = PoolAttention(self.hidden_channels)
@@ -302,11 +175,6 @@ class HDNDTI(nn.Module):
             drug_global_repr = atom_x[mol_node_levels==2]
             drug_repr.append(drug_global_repr)
             prot_repr.append(prot_global_repr)
-
-        # # Sequence Encoding
-        # drug_smiles_repr, prot_seq_repr = self.seq_encoder.encode(smiles_x, seq_x)
-        # drug_repr.append(drug_smiles_repr)
-        # prot_repr.append(prot_seq_repr)
 
         atom_x_seq = self.drug_seq_emb(smiles_x)
         aa_x_seq = self.prot_seq_emb(seq_x)

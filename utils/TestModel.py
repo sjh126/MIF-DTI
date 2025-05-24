@@ -62,7 +62,7 @@ def test_precess(MODEL, pbar, LOSS, DEVICE, FOLD_NUM):
     return Y, P, test_loss, Accuracy, Precision, Recall, AUC, PRC
 
 
-def test_HDN_precess(MODEL, pbar, LOSS, DEVICE, FOLD_NUM):
+def test_MIF_precess(MODEL, pbar, LOSS, DEVICE, FOLD_NUM):
     if isinstance(MODEL, list):
         for item in MODEL:
             item.eval()
@@ -102,14 +102,14 @@ def test_HDN_precess(MODEL, pbar, LOSS, DEVICE, FOLD_NUM):
     test_loss = np.average(test_losses)
     return Y, P, test_loss, Accuracy, Precision, Recall, AUC, PRC
 
-def test_model(MODEL, dataset_loader, save_path, DATASET, LOSS, DEVICE, dataset_class="Train", save=True, FOLD_NUM=1, HDN=False):
+def test_model(MODEL, dataset_loader, save_path, DATASET, LOSS, DEVICE, dataset_class="Train", save=True, FOLD_NUM=1, MIF=False):
     test_pbar = tqdm(
         enumerate(
             BackgroundGenerator(dataset_loader)),
         total=len(dataset_loader))
     #test_pbar = enumerate(BackgroundGenerator(dataset_loader))
     T, P, loss_test, Accuracy_test, Precision_test, Recall_test, AUC_test, PRC_test = \
-        test_HDN_precess(MODEL, test_pbar, LOSS, DEVICE, FOLD_NUM) if HDN else test_precess(MODEL, test_pbar, LOSS, DEVICE, FOLD_NUM)
+        test_MIF_precess(MODEL, test_pbar, LOSS, DEVICE, FOLD_NUM) if MIF else test_precess(MODEL, test_pbar, LOSS, DEVICE, FOLD_NUM)
     if save:
         if FOLD_NUM == 1:
             filepath = save_path + \

@@ -1,17 +1,17 @@
 import argparse
 import torch
-from RunModel import run_model, ensemble_run_model, run_HDN_model,ensemble_run_HDN_model
-from model import MCANet, HDNDTI
+from RunModel import run_MIF_model,ensemble_run_MIF_model
+from model import MIFDTI
 
 parser = argparse.ArgumentParser(
-    prog='MCANet',
-    description='MCANet is model in paper: \"MultiheadCrossAttention based network model for DTI prediction\"',
+    prog='MIF-DTI',
+    description='MIF-DTI is model in paper: \"multimodal information fusion method for drug-target interaction prediction\"',
     epilog='Model config set by config.py')
 
 parser.add_argument('dataSetName', choices=[
-                    "DrugBank", "KIBA", "Davis", "Enzyme", "GPCRs", "ion_channel",'human','BIOSNAP'], help='Enter which dataset to use for the experiment')
-parser.add_argument('-m', '--model', choices=['MCANet', 'MCANet-B', 'onlyPolyLoss', 'onlyMCA', 'HDN-DTI', 'HDN-DTI-B'],
-                    default='HDN-DTI', help='Which model to use, \"HDN-DTI\" is used by default')
+                    "DrugBank", "Davis", "BIOSNAP"], help='Enter which dataset to use for the experiment')
+parser.add_argument('-m', '--model', choices=['MIF-DTI', 'MIF-DTI-B'],
+                    default='MIF-DTI', help='Which model to use, \"MIF-DTI\" is used by default')
 parser.add_argument('-s', '--seed', type=int, default=114514,
                     help='Set the random seed, the default is 114514')
 parser.add_argument('-f', '--fold', type=int, default=5,
@@ -22,16 +22,8 @@ parser.add_argument('-g', '--gpu', type=int, default=0,
 args = parser.parse_args()
 device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
 
-if args.model == 'MCANet':
-    run_model(SEED=args.seed, DATASET=args.dataSetName,
-              MODEL=MCANet, K_Fold=args.fold, LOSS='PolyLoss')
-if args.model == 'onlyMCA':
-    run_model(SEED=args.seed, DATASET=args.dataSetName,
-              MODEL=MCANet, K_Fold=args.fold, LOSS='CrossEntropy')
-if args.model == 'MCANet-B':
-    ensemble_run_model(SEED=args.seed, DATASET=args.dataSetName, K_Fold=args.fold)
-if args.model == 'HDN-DTI':
-    run_HDN_model(SEED=args.seed, DATASET=args.dataSetName,
-              MODEL=HDNDTI, K_Fold=args.fold, LOSS='PolyLoss', device=device)
-if args.model == 'HDN-DTI-B':
-    ensemble_run_HDN_model(SEED=args.seed, DATASET=args.dataSetName, K_Fold=args.fold, device=device)
+if args.model == 'MIF-DTI':
+    run_MIF_model(SEED=args.seed, DATASET=args.dataSetName,
+              MODEL=MIFDTI, K_Fold=args.fold, LOSS='PolyLoss', device=device)
+if args.model == 'MIF-DTI-B':
+    ensemble_run_MIF_model(SEED=args.seed, DATASET=args.dataSetName, K_Fold=args.fold, device=device)

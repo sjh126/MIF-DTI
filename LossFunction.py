@@ -1,12 +1,5 @@
 # -*- coding:utf-8 -*-
-'''
-Author: MrZQAQ
-Date: 2022-05-01 14:10
-LastEditTime: 2022-11-23 16:31
-LastEditors: MrZQAQ
-Description: CELoss and PolyLoss
-FilePath: /MCANet/LossFunction.py
-'''
+
 
 import torch
 import torch.nn as nn

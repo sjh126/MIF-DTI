@@ -1,12 +1,5 @@
 # -*- coding:utf-8 -*-
-'''
-Author: MrZQAQ
-Date: 2022-03-26 19:28
-LastEditTime: 2022-11-23 15:22
-LastEditors: MrZQAQ
-Description: hyperparameter config file
-FilePath: /MCANet/config.py
-'''
+
 
 class hyperparameter():
     def __init__(self):

@@ -1,7 +1,5 @@
 *.pyc
 *.pth
-*.txt
-!requirements.txt
 *.pt
 *.pkl
 demo*

@@ -9,7 +9,7 @@ parser = argparse.ArgumentParser(
     epilog='Model config set by config.py')
 
 parser.add_argument('dataSetName', choices=[
-                    "DrugBank", "Davis", "BIOSNAP"], help='Enter which dataset to use for the experiment')
+                    "DrugBank", "Davis", "BIOSNAP","BD2D"], help='Enter which dataset to use for the experiment')
 parser.add_argument('-m', '--model', choices=['MIF-DTI', 'MIF-DTI-B'],
                     default='MIF-DTI', help='Which model to use, \"MIF-DTI\" is used by default')
 parser.add_argument('-s', '--seed', type=int, default=114514,

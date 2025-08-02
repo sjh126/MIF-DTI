@@ -55,14 +55,22 @@ def run_MIF_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
     else:
         weight_loss = None
 
-    '''shuffle data'''
-    print("data shuffle")
-    data_list = shuffle_dataset(data_list, SEED)
+    if DATASET == "BD2D":
+        split_pos = 52010
+        train_data_list = data_list[:split_pos]
+        test_data_list = data_list[split_pos:]
+        '''shuffle data'''
+        print("data shuffle")
+        train_data_list = shuffle_dataset(train_data_list, SEED)
+    else:
+        '''shuffle data'''
+        print("data shuffle")
+        data_list = shuffle_dataset(data_list, SEED)
 
-    '''split dataset to train&validation set and test set'''
-    split_pos = len(data_list) - int(len(data_list) * 0.2)
-    train_data_list = data_list[0:split_pos]
-    test_data_list = data_list[split_pos:-1]
+        '''split dataset to train&validation set and test set'''
+        split_pos = len(data_list) - int(len(data_list) * 0.2)
+        train_data_list = data_list[0:split_pos]
+        test_data_list = data_list[split_pos:-1]
     print('Number of Train&Val set: {}'.format(len(train_data_list)))
     print('Number of Test set: {}'.format(len(test_data_list)))
 

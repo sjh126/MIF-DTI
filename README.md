@@ -1,6 +1,10 @@
 # MIF-DTI
 MIF-DTI: a multimodal information fusion method for drug-target interaction prediction
 
+<div align="center">
+<p><img src="MIF-DTI-framework.pdf" width="600" /></p>
+</div>
+
 # Dependencies:
 torch==2.4.1
 
@@ -33,7 +37,7 @@ README.md: this file.
 
 requirements.txt:  dependencies.
 
-DataSets: DrugBank.txt, Davis.txt, BioSNAP.txt, BD2D.txt.
+DataSets: DrugBank.txt, Davis.txt, BioSNAP.txt, BD2D.txt **(for cross-dataset validation)**.
 
 RunModel.py: train and test the model.
 

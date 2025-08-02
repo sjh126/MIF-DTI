@@ -43,7 +43,7 @@ RunModel.py: train and test the model.
 
 main.py: main process.
 
-model.py: MIF and MIF-B model architecture.
+model.py: MIF-DTI and MIF-DTI-B model architecture.
 
 # Run:
 python -u main.py [dataset] -m [model]

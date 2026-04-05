@@ -40,7 +40,7 @@ def test_precess(MODEL, pbar, LOSS, DEVICE, FOLD_NUM):
                         MODEL[i](compounds, proteins)
                 predicted_scores = predicted_scores / FOLD_NUM
             else:
-                predicted_scores = MODEL(compounds, proteins)
+                predicted_scores, _ = MODEL(compounds, proteins)
             loss = LOSS(predicted_scores, labels)
             correct_labels = labels.to('cpu').data.numpy()
             predicted_scores = F.softmax(
@@ -76,12 +76,15 @@ def test_MIF_precess(MODEL, pbar, LOSS, DEVICE, FOLD_NUM):
             data = data.to(DEVICE)
             if isinstance(MODEL, list):
                 predicted_scores = torch.zeros(2).to(DEVICE)
+                # for i in range(len(MODEL)):
+                #     predicted_scores = predicted_scores + \
+                #         MODEL[i](data)
                 for i in range(len(MODEL)):
-                    predicted_scores = predicted_scores + \
-                        MODEL[i](data)
+                    score, _ = MODEL[i](data)
+                    predicted_scores = predicted_scores + score
                 predicted_scores = predicted_scores / FOLD_NUM
             else:
-                predicted_scores = MODEL(data)
+                predicted_scores, _ = MODEL(data)
             labels = data.cls_y
             loss = LOSS(predicted_scores, labels)
             correct_labels = labels.to('cpu').data.numpy()

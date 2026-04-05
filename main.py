@@ -1,6 +1,6 @@
 import argparse
 import torch
-from RunModel import run_MIF_model,ensemble_run_MIF_model
+from  RunModel import run_MIF_model,ensemble_run_MIF_model
 from model import MIFDTI
 
 parser = argparse.ArgumentParser(

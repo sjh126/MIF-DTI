@@ -3,7 +3,7 @@
 import os
 import random
 import joblib
-
+import sys
 import numpy as np
 import torch
 import torch.nn as nn
@@ -19,9 +19,9 @@ from tqdm import tqdm
 from config import hyperparameter
 from model import MIFDTI
 from utils.DataPrepare import get_kfold_data, shuffle_dataset
-from utils.DataSetsFunction import CustomDataSet, collate_fn
 from utils.EarlyStoping import EarlyStopping
-from LossFunction import CELoss, PolyLoss
+from LossFunction import CELoss, PolyLoss, FocalLoss,HybridLoss
+from utils.contrastive_loss_torch import SupervisedNTXentLoss, NPairsLoss
 from utils.TestModel import test_model
 from utils.ShowResult import show_result
 from utils import protein_init, ligand_init, ProteinMoleculeDataset
@@ -46,7 +46,6 @@ def run_MIF_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
     with open(dir_input, "r") as f:
         data_list = f.read().strip().split('\n')
     print("load finished")
-
     '''set loss function weight'''
     if DATASET == "Davis":
         weight_loss = torch.FloatTensor([0.3, 0.7]).to(device)
@@ -83,8 +82,31 @@ def run_MIF_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
         print('Initialising Protein Sequence to Protein Graph...')
         protein_seqs = list(set([item.split(' ')[-2] for item in data_list]))
         protein_dict = protein_init(protein_seqs)
-        joblib.dump(protein_dict,protein_path)
+        print("蛋白质数量:", len(protein_dict))
 
+        # 打印前 1~2 个 key 和对应结构
+        for i, (k, v) in enumerate(protein_dict.items()):
+            print(f"\n=== Protein #{i+1} ===")
+            print(f"Sequence length: {len(k)}")
+            print("Keys inside this protein data:", list(v.keys()))
+            # 只打印几个小字段看看
+            if "seq" in v:
+                print("seq example:", v["seq"][:30], "...")
+            if "token_representation" in v:
+                print("token_representation shape:", v["token_representation"].shape)
+            if "edge_index" in v:
+                print("edge_index shape:", v["edge_index"].shape)
+            if i == 1:  # 只看前两个蛋白
+                break
+        joblib.dump(protein_dict,protein_path)
+    protein_biomedgpt_path= f'./DataSets/Preprocessed/{DATASET}-biomedgpt_targets.pt'
+    if os.path.exists(protein_biomedgpt_path):
+        print('Loading BiomedGPT 靶点表征...')
+        protein_biomedgpt_dict = torch.load(protein_biomedgpt_path)
+    else:
+        print('BiomedGPT 靶点 embedding 文件不存在，请先生成。')
+        protein_biomedgpt_dict = None
+        
     ligand_path = f'./DataSets/Preprocessed/{DATASET}-ligand-hi.pkl'
     if os.path.exists(ligand_path):
         print('Loading Ligand Graph data...')
@@ -94,9 +116,16 @@ def run_MIF_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
         ligand_smiles = list(set([item.split(' ')[-3] for item in data_list]))
         ligand_dict = ligand_init(ligand_smiles, mode='BRICS')
         joblib.dump(ligand_dict,ligand_path)
-
+    ligand_biomedgpt_path = f'./DataSets/Preprocessed/{DATASET}-biomedgpt_drugs.pt'
+    if os.path.exists(ligand_biomedgpt_path):
+        print('Loading BiomedGPT 药物表征...')
+        ligand_biomedgpt_dict = torch.load(ligand_biomedgpt_path)
+    else:
+        print('BiomedGPT 药物 embedding 文件不存在，请先生成。')
+        ligand_biomedgpt_dict=None
+        
+        
     torch.cuda.empty_cache()
-
     '''metrics'''
     Accuracy_List_stable, AUC_List_stable, AUPR_List_stable, Recall_List_stable, Precision_List_stable = [], [], [], [], []
 
@@ -104,9 +133,9 @@ def run_MIF_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
         print('*' * 25, 'No.', i_fold + 1, '-fold', '*' * 25)
 
         train_dataset, valid_dataset = get_kfold_data(i_fold, train_data_list, k=K_Fold)
-        train_dataset = ProteinMoleculeDataset(train_dataset, ligand_dict, protein_dict, device=device)
-        valid_dataset = ProteinMoleculeDataset(valid_dataset, ligand_dict, protein_dict, device=device)
-        test_dataset = ProteinMoleculeDataset(test_data_list, ligand_dict, protein_dict, device=device)
+        train_dataset = ProteinMoleculeDataset(train_dataset, ligand_dict, protein_dict, ligand_biomedgpt_dict, protein_biomedgpt_dict, device=device)
+        valid_dataset = ProteinMoleculeDataset(valid_dataset, ligand_dict, protein_dict, ligand_biomedgpt_dict, protein_biomedgpt_dict,  device=device)
+        test_dataset = ProteinMoleculeDataset(test_data_list, ligand_dict, protein_dict, ligand_biomedgpt_dict, protein_biomedgpt_dict,  device=device)
         train_size = len(train_dataset)
 
         train_loader = pyg_loader.DataLoader(train_dataset, batch_size=hp.Batch_size, shuffle=True, follow_batch=['mol_x', 'clique_x', 'prot_node_aa'], drop_last=True)
@@ -137,8 +166,10 @@ def run_MIF_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
         #     Loss = PolyLoss(weight_loss=weight_loss,
         #                     DEVICE=device, epsilon=hp.loss_epsilon)
         # else:
-        Loss = CELoss(weight_CE=weight_loss, DEVICE=device)
-
+        # 主分类损失（CE+Focal混合）
+        Loss = HybridLoss(weight_ce=weight_loss, alpha_focal=0.75, gamma=3.0, lambda_focal=0.7, DEVICE=device)
+        # 新增：Supervised NT-Xent 对比损失（作用于交互嵌入）
+        ContrastLoss = SupervisedNTXentLoss(temperature=0.5, base_temperature=0.07)
         """Output files"""
         save_path = "./" + DATASET + "/{}".format(i_fold+1)
         if not os.path.exists(save_path):
@@ -161,8 +192,12 @@ def run_MIF_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
                 optimizer.zero_grad()
 
                 data = data.to(device)
-                predicted_y= model(data)
-                train_loss = Loss(predicted_y, data.cls_y)
+                logits, interaction_repr = model(data)
+                cls_loss = Loss(logits, data.cls_y)
+                # 对比损失：使用当前 batch 的交互嵌入与标签
+                contr_loss = ContrastLoss(interaction_repr, data.cls_y)
+                # 总损失：线性组合，可调权重
+                train_loss = cls_loss+ 0.1 * contr_loss
                 train_losses_in_epoch.append(train_loss.item())
                 train_loss.backward()
                 optimizer.step()
@@ -177,13 +212,12 @@ def run_MIF_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
                 for data in valid_loader:
 
                     data = data.to(device)
-                    valid_scores = model(data)
-                    
+                    valid_logits, valid_repr = model(data)
                     valid_labels = data.cls_y
-                    valid_loss = Loss(valid_scores, valid_labels)
+                    valid_loss = Loss(valid_logits, valid_labels) + 0.1 * ContrastLoss(valid_repr, valid_labels)
                     valid_losses_in_epoch.append(valid_loss.item())
                     valid_labels = valid_labels.to('cpu').data.numpy()
-                    valid_scores = F.softmax(valid_scores, 1).to('cpu').data.numpy()
+                    valid_scores = F.softmax(valid_logits, 1).to('cpu').data.numpy()
                     valid_predictions = np.argmax(valid_scores, axis=1)
                     valid_scores = valid_scores[:, 1]
 
@@ -236,7 +270,7 @@ def run_MIF_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
 
     show_result(DATASET, Accuracy_List_stable, Precision_List_stable,
                 Recall_List_stable, AUC_List_stable, AUPR_List_stable, Ensemble=False)
-    
+    return np.mean(Accuracy_List_stable)
 
 def ensemble_run_MIF_model(SEED, DATASET, K_Fold, device):
 
@@ -298,6 +332,26 @@ def ensemble_run_MIF_model(SEED, DATASET, K_Fold, device):
         ligand_smiles = list(set([item.split(' ')[-3] for item in data_list]))
         ligand_dict = ligand_init(ligand_smiles, mode='BRICS')
         joblib.dump(ligand_dict,ligand_path)
+        
+    # biomedgpt_path = f'./DataSets/Preprocessed/Davis_biomedgpt.pt'
+    # print("Loading BiomedGPT embeddings...")
+    # if os.path.exists(biomedgpt_path):
+    #     biomedgpt_cache = torch.load(biomedgpt_path)
+    #     print(f"✅ Loaded BiomedGPT cache: {len(biomedgpt_cache)} samples")
+    # else:
+    #     raise FileNotFoundError(f"❌ Missing {biomedgpt_path}, please generate with generate_biomedgpt_cache.py")
+
+    # # 构建索引表（SMILES → 向量，SEQ → 向量）
+    # biomedgpt_drug_dict = {}
+    # biomedgpt_target_dict = {}
+
+    # for k, v in biomedgpt_cache.items():
+    #     drug_emb = v["drug_emb"]
+    #     target_emb = v["target_emb"]
+    #     label = v["label"]
+    #     biomedgpt_drug_dict[v.get("smiles", k)] = drug_emb
+    #     biomedgpt_target_dict[v.get("sequence", v.get("target_name", k))] = target_emb
+    # del biomedgpt_cache
 
     torch.cuda.empty_cache()  
     

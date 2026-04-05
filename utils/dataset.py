@@ -5,7 +5,7 @@ from torch_geometric.data import Data
 import pickle
 import torch.utils.data
 import numpy as np
-from utils.DataSetsFunction import label_sequence, label_smiles
+from utils.DataSetsFunction import *
 
 
 def get_m2p_edge(mol_x, prot_x, mol_node_level=None):
@@ -21,80 +21,96 @@ def get_m2p_edge(mol_x, prot_x, mol_node_level=None):
     return edge_list
 
 class ProteinMoleculeDataset(Dataset):
-    def __init__(self, sequence_data, mol_obj, prot_obj, device='cpu'):
+    def __init__(self, sequence_data, mol_graph, prot_graph,
+                 mol_embedding=None, prot_embedding=None, device='cpu'):
         super(ProteinMoleculeDataset, self).__init__()
 
-        if isinstance(sequence_data,list):
-            self.pairs = sequence_data
-        else:
+        if not isinstance(sequence_data, list):
             raise Exception("provide list object")
+        self.pairs = sequence_data
         
-        ## MOLECULES
-        if isinstance(mol_obj, dict):
-            self.mols = mol_obj
-        elif isinstance(mol_obj, str):
-            with open(mol_obj, 'rb') as f:
+        # ======== MOLECULE ========
+        if isinstance(mol_graph, dict):
+            self.mols = mol_graph
+        elif isinstance(mol_graph, str):
+            with open(mol_graph, 'rb') as f:
                 self.mols = pickle.load(f)
         else:
             raise Exception("provide dict mol object or pickle path")
+        self.mol_embedding = mol_embedding  # dict: {mol_key: tensor[hidden_dim]}
 
-
-        ## PROTEINS
-        if isinstance(prot_obj, dict):
-            self.prots = prot_obj
-        elif isinstance(prot_obj, str):
-            self.prots = torch.load(prot_obj)
+        # ======== PROTEIN ========
+        if isinstance(prot_graph, dict):
+            self.prots = prot_graph
+        elif isinstance(prot_graph, str):
+            self.prots = torch.load(prot_graph)
         else:
-            raise Exception("provide dict mol object or pickle path")
+            raise Exception("provide dict prot object or pickle path")
+        self.prot_embedding = prot_embedding  # dict: {prot_key: tensor[hidden_dim]}
 
         self.device = device
 
-        for _, v in self.mols.items():
+        # ======== Process molecules ========
+        for k, v in self.mols.items():
             v['atom_idx'] = v['atom_idx'].long().view(-1, 1)
             v['atom_feature'] = v['atom_feature'].float()
             adj = v['bond_feature'].long()
-            mol_edge_index =  adj.nonzero(as_tuple=False).t().contiguous()
+            mol_edge_index = adj.nonzero(as_tuple=False).t().contiguous()
             v['atom_edge_index'] = mol_edge_index
             v['atom_edge_attr'] = adj[mol_edge_index[0], mol_edge_index[1]].long()
             v['atom_num_nodes'] = v['atom_idx'].shape[0]
+            #   seq来源
             v['smiles_x'] = torch.tensor(label_smiles(v['smiles'], MAX_SMI_LEN=200)).reshape(1, -1)
 
+            # ======== Molecule embedding ========
+            if self.mol_embedding is not None and k in self.mol_embedding:
+                emb = self.mol_embedding[k]
+                if emb.dim() == 1:
+                    emb = emb.unsqueeze(0)  # [1, hidden_dim]
+                v['mol_embedding'] = emb
+            else:
+                v['mol_embedding'] = None
 
-        for _, v in self.prots.items():
+        # ======== Process proteins ========
+        for k, v in self.prots.items():
             v['seq_feat'] = v['seq_feat'].float()
             v['token_representation'] = v['token_representation'].float()
             v['num_nodes'] = len(v['seq'])
-            v['node_pos'] = torch.arange(len(v['seq'])).reshape(-1,1)
+            v['node_pos'] = torch.arange(len(v['seq'])).reshape(-1, 1)
             v['edge_weight'] = v['edge_weight'].float()
+            #   seq来源
             v['seq_x'] = torch.tensor(label_sequence(v['seq'], MAX_SEQ_LEN=1500)).reshape(1, -1)
 
-    def get(self, index):
-        return self.__getitem__(index)
+            # ======== Protein embedding ========
+            if self.prot_embedding is not None and k in self.prot_embedding:
+                emb = self.prot_embedding[k]
+                if emb.dim() == 1:
+                    emb = emb.unsqueeze(0)  # [1, hidden_dim]
+                v['prot_embedding'] = emb
+            else:
+                v['prot_embedding'] = None
 
-    def len(self):
-        return self.__len__()
-    
     def __len__(self):
         return len(self.pairs)
 
     def __getitem__(self, idx):
-        # Extract data
         items = self.pairs[idx].split(' ')
         mol_key, prot_key = items[-3], items[-2]
         cls_y = torch.tensor(int(items[-1])).long()
-            
+
         mol = self.mols[mol_key]
         prot = self.prots[prot_key]
-        
-        ## atom
+
+        # ======== Molecule ========
         mol_x = mol['atom_idx']
         mol_x_feat = mol['atom_feature']
-        mol_edge_index  = mol['atom_edge_index']
+        mol_edge_index = mol['atom_edge_index']
         mol_edge_attr = mol['atom_edge_attr']
         mol_num_nodes = mol['atom_num_nodes']
         mol_smiles_x = mol['smiles_x']
+        mol_embedding = mol.get('mol_embedding', None)  # [1, hidden_dim] or None
 
-        ## Prot
+        # ======== Protein ========
         prot_seq = prot['seq']
         prot_seq_x = prot['seq_x']
         prot_node_aa = prot['seq_feat']
@@ -103,22 +119,26 @@ class ProteinMoleculeDataset(Dataset):
         prot_node_pos = prot['node_pos']
         prot_edge_index = prot['edge_index']
         prot_edge_weight = prot['edge_weight']
+        prot_embedding = prot.get('prot_embedding', None)  # [1, hidden_dim] or None
 
         out = MultiGraphData(
-                ## MOLECULE
-                mol_x=mol_x, mol_smiles_x=mol_smiles_x, mol_x_feat=mol_x_feat, mol_edge_index=mol_edge_index,
-                mol_edge_attr=mol_edge_attr, mol_num_nodes= mol_num_nodes, mol_node_levels=mol['node_levels'],
-                ## PROTEIN
-                prot_node_aa=prot_node_aa, prot_node_evo=prot_node_evo, prot_seq_x=prot_seq_x,
-                prot_node_pos=prot_node_pos, prot_seq=prot_seq,
-                prot_edge_index=prot_edge_index, prot_edge_weight=prot_edge_weight,
-                prot_num_nodes=prot_num_nodes,
-                ## Y output
-                cls_y=cls_y,
-                ## keys
-                mol_key = mol_key, prot_key = prot_key,
-                # BI GRAPH
-                m2p_edge_index = get_m2p_edge(mol_x, prot_node_aa, mol['node_levels'])
+            # Molecule
+            mol_x=mol_x, mol_smiles_x=mol_smiles_x, mol_x_feat=mol_x_feat,
+            mol_edge_index=mol_edge_index, mol_edge_attr=mol_edge_attr,
+            mol_num_nodes=mol_num_nodes, mol_node_levels=mol['node_levels'],
+            mol_embedding=mol_embedding,
+            # Protein
+            prot_node_aa=prot_node_aa, prot_node_evo=prot_node_evo,
+            prot_seq_x=prot_seq_x, prot_node_pos=prot_node_pos,
+            prot_seq=prot_seq, prot_edge_index=prot_edge_index,
+            prot_edge_weight=prot_edge_weight, prot_num_nodes=prot_num_nodes,
+            prot_embedding=prot_embedding,
+            # Label
+            cls_y=cls_y,
+            # Keys
+            mol_key=mol_key, prot_key=prot_key,
+            # BI Graph
+            m2p_edge_index=get_m2p_edge(mol_x, prot_node_aa, mol['node_levels'])
         )
 
         return out

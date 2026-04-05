@@ -1,6 +1,10 @@
 import torch
 from torch.utils.data import Dataset
 import numpy as np
+from subword_nmt.apply_bpe import BPE
+import codecs
+import pandas as pd
+from subword_nmt.apply_bpe import BPE
 CHARISOSMISET = {"#": 29, "%": 30, ")": 31, "(": 1, "+": 32, "-": 33, "/": 34, ".": 2,
                  "1": 35, "0": 3, "3": 36, "2": 4, "5": 37, "4": 5, "7": 38, "6": 6,
                  "9": 39, "8": 7, "=": 40, "A": 41, "@": 8, "C": 42, "B": 9, "E": 43,
@@ -34,36 +38,60 @@ def label_sequence(line, smi_ch_ind=CHARPROTSET, MAX_SEQ_LEN=1000):
     return X
 
 
-class CustomDataSet(Dataset):
-    def __init__(self, pairs):
-        self.pairs = pairs
+import codecs
+import pandas as pd
+from subword_nmt.apply_bpe import BPE
 
-    def __getitem__(self, item):
-        return self.pairs[item]
+# ===== Protein BPE =====
+vocab_path_p = './ESPF/protein_codes_uniprot.txt'
+bpe_codes_protein = codecs.open(vocab_path_p)
+pbpe = BPE(bpe_codes_protein, merges=-1, separator='')
 
-    def __len__(self):
-        return len(self.pairs)
+sub_csv_p = pd.read_csv('./ESPF/subword_units_map_uniprot.csv')
+idx2word_p = sub_csv_p['index'].values
+words2idx_p = dict(zip(idx2word_p, range(0, len(idx2word_p))))
+
+# ===== Drug BPE =====
+vocab_path_d = './ESPF/drug_codes_chembl.txt'
+bpe_codes_drug = codecs.open(vocab_path_d)
+dbpe = BPE(bpe_codes_drug, merges=-1, separator='')
+
+sub_csv_d = pd.read_csv('./ESPF/subword_units_map_chembl.csv')
+idx2word_d = sub_csv_d['index'].values
+words2idx_d = dict(zip(idx2word_d, range(0, len(idx2word_d))))
+
+def label_smiles_bpe(smiles, max_len=50):
+    """将 SMILES 转为 BPE 子词索引序列"""
+    tokens = dbpe.process_line(smiles).split()  # 用 drug BPE 切分
+    try:
+        ids = np.asarray([words2idx_d[tok] for tok in tokens])
+    except KeyError:
+        ids = np.array([0])  # 未知token用0代替
+
+    # padding / 截断
+    if len(ids) < max_len:
+        ids = np.pad(ids, (0, max_len - len(ids)), constant_values=0)
+    else:
+        ids = ids[:max_len]
+    return ids
 
 
-def collate_fn(batch_data):
-    N = len(batch_data)
-    drug_ids, protein_ids = [], []
-    compound_max = 100
-    protein_max = 1000
-    compound_new = torch.zeros((N, compound_max), dtype=torch.long)
-    protein_new = torch.zeros((N, protein_max), dtype=torch.long)
-    labels_new = torch.zeros(N, dtype=torch.long)
-    for i, pair in enumerate(batch_data):
-        pair = pair.strip().split()
-        drug_id, protein_id, compoundstr, proteinstr, label = pair[-5], pair[-4], pair[-3], pair[-2], pair[-1]
-        drug_ids.append(drug_id)
-        protein_ids.append(protein_id)
-        compoundint = torch.from_numpy(label_smiles(
-            compoundstr, CHARISOSMISET, compound_max))
-        compound_new[i] = compoundint
-        proteinint = torch.from_numpy(label_sequence(
-            proteinstr, CHARPROTSET, protein_max))
-        protein_new[i] = proteinint
-        label = float(label)
-        labels_new[i] = np.int16(label)
-    return (compound_new, protein_new, labels_new)
+def label_sequence_bpe(seq, max_len=600):
+    """将蛋白序列转为 BPE 子词索引序列"""
+    tokens = pbpe.process_line(seq).split()  # 用 protein BPE 切分
+    try:
+        ids = np.asarray([words2idx_p[tok] for tok in tokens])
+    except KeyError:
+        ids = np.array([0])
+
+    # padding / 截断
+    if len(ids) < max_len:
+        ids = np.pad(ids, (0, max_len - len(ids)), constant_values=0)
+    else:
+        ids = ids[:max_len]
+    return ids
+
+vocab_size_drug = len(words2idx_d)
+vocab_size_prot = len(words2idx_p)
+print("""vocab_size_drug: """,vocab_size_drug)
+print("""vocab_size_prot: """,vocab_size_prot)

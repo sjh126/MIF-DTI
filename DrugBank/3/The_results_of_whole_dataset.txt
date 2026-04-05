@@ -1,0 +1,20 @@
+Test the stable model
+Train: Loss:0.00103;Accuracy:0.99986;Precision:0.99981;Recall:0.99991;AUC:1.00000;PRC:1.00000.
+Valid: Loss:0.63859;Accuracy:0.86589;Precision:0.86629;Recall:0.86533;AUC:0.93290;PRC:0.93317.
+Test: Loss:0.65945;Accuracy:0.85577;Precision:0.85671;Recall:0.85204;AUC:0.93022;PRC:0.93041.
+Test the stable model
+Train: Loss:0.00182;Accuracy:0.99982;Precision:0.99991;Recall:0.99972;AUC:1.00000;PRC:1.00000.
+Valid: Loss:0.22345;Accuracy:0.86886;Precision:0.87121;Recall:0.86570;AUC:0.93574;PRC:0.94070.
+Test: Loss:0.24120;Accuracy:0.85547;Precision:0.85276;Recall:0.85688;AUC:0.93075;PRC:0.93564.
+Test the stable model
+Train: Loss:0.00739;Accuracy:0.99912;Precision:0.99888;Recall:0.99935;AUC:0.99999;PRC:0.99999.
+Valid: Loss:0.21815;Accuracy:0.86570;Precision:0.86246;Recall:0.87016;AUC:0.93168;PRC:0.93327.
+Test: Loss:0.22293;Accuracy:0.85817;Precision:0.85019;Recall:0.86717;AUC:0.93035;PRC:0.93385.
+Test the stable model
+Train: Loss:0.01354;Accuracy:0.99644;Precision:0.99379;Recall:0.99907;AUC:0.99989;PRC:0.99987.
+Valid: Loss:0.25604;Accuracy:0.84580;Precision:0.83137;Recall:0.86756;AUC:0.91830;PRC:0.92128.
+Test: Loss:0.25605;Accuracy:0.84450;Precision:0.82709;Recall:0.86838;AUC:0.91779;PRC:0.92094.
+Test the stable model
+Train: Loss:0.00065;Accuracy:0.99977;Precision:0.99991;Recall:0.99963;AUC:1.00000;PRC:1.00000.
+Valid: Loss:0.37849;Accuracy:0.87240;Precision:0.88061;Recall:0.86161;AUC:0.93518;PRC:0.93655.
+Test: Loss:0.41179;Accuracy:0.86343;Precision:0.87159;Recall:0.85023;AUC:0.93086;PRC:0.93125.

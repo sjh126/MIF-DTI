@@ -1,7 +1,7 @@
 import argparse
 import torch
 from  RunModel import run_MIF_model,ensemble_run_MIF_model
-from model import MIFDTI
+from model import MIFDTI, RSGCLDTI
 
 parser = argparse.ArgumentParser(
     prog='MIF-DTI',
@@ -10,7 +10,7 @@ parser = argparse.ArgumentParser(
 
 parser.add_argument('dataSetName', choices=[
                     "DrugBank", "Davis", "BIOSNAP","BD2D"], help='Enter which dataset to use for the experiment')
-parser.add_argument('-m', '--model', choices=['MIF-DTI', 'MIF-DTI-B'],
+parser.add_argument('-m', '--model', choices=['MIF-DTI', 'MIF-DTI-B', 'RSGCL-DTI'],
                     default='MIF-DTI', help='Which model to use, \"MIF-DTI\" is used by default')
 parser.add_argument('-s', '--seed', type=int, default=114514,
                     help='Set the random seed, the default is 114514')
@@ -27,3 +27,6 @@ if args.model == 'MIF-DTI':
               MODEL=MIFDTI, K_Fold=args.fold, LOSS='PolyLoss', device=device)
 if args.model == 'MIF-DTI-B':
     ensemble_run_MIF_model(SEED=args.seed, DATASET=args.dataSetName, K_Fold=args.fold, device=device)
+if args.model == 'RSGCL-DTI':
+    run_MIF_model(SEED=args.seed, DATASET=args.dataSetName,
+              MODEL=RSGCLDTI, K_Fold=args.fold, LOSS='PolyLoss', device=device)

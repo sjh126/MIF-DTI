@@ -8,9 +8,12 @@ from torch.nn import Embedding
 from layers import *
 from torch_geometric.nn import (
                                 GATConv,
+                                GCNConv,
                                 SAGPooling,
                                 LayerNorm,
-                                global_add_pool
+                                global_add_pool,
+                                global_mean_pool,
+                                global_max_pool
                                 )
 from config import hyperparameter
 from utils.DataSetsFunction import vocab_size_drug,vocab_size_prot
@@ -297,6 +300,220 @@ class MIFDTI(nn.Module):
         # Co-attn
         logits, interaction_repr = self.attn(drug_repr, prot_repr)
         return logits, interaction_repr
+
+
+class SimilarityGraphRefiner(nn.Module):
+    """Builds a batch-level similarity graph and refines node features via GCN."""
+
+    def __init__(self, hidden_dim, threshold=0.5, dropout=0.1):
+        super().__init__()
+        self.threshold = threshold
+        self.dropout = dropout
+        self.conv1 = GCNConv(hidden_dim, hidden_dim)
+        self.conv2 = GCNConv(hidden_dim, hidden_dim)
+
+    def forward(self, x):
+        if x.size(0) <= 1:
+            return x
+
+        x_norm = F.normalize(x, dim=-1, eps=1e-8)
+        sim = torch.matmul(x_norm, x_norm.transpose(0, 1))
+        edge_index = (sim >= self.threshold).nonzero(as_tuple=False).t().contiguous()
+
+        node_ids = torch.arange(x.size(0), device=x.device, dtype=torch.long)
+        self_loops = torch.stack([node_ids, node_ids], dim=0)
+        edge_index = torch.cat([edge_index, self_loops], dim=1)
+
+        out = F.elu(self.conv1(x, edge_index))
+        out = F.dropout(out, p=self.dropout, training=self.training)
+        out = self.conv2(out, edge_index)
+        return x + out
+
+
+class RSGCLDTI(nn.Module):
+    """
+    RSGCL-style DTI model adapted to MIF-DTI data format.
+    - Sequence CNN branch (drug SMILES / protein sequence)
+    - Graph branch (drug/protein structural graph)
+    - Relational similarity refinement over each mini-batch
+    """
+
+    def __init__(self, hidden_channels=200, device='cuda:0'):
+        super().__init__()
+
+        self.hidden_channels = hidden_channels
+        self.device = device
+        self.drug_in_channels = 43
+        self.prot_in_channels = 33
+        self.prot_evo_in_channels = 1280
+
+        # Graph input projection
+        self.atom_type_encoder = Embedding(20, self.hidden_channels)
+        self.atom_feat_encoder = MLP(
+            [self.drug_in_channels, self.hidden_channels * 2, self.hidden_channels],
+            out_norm=True
+        )
+        self.prot_aa = MLP(
+            [self.prot_in_channels, self.hidden_channels * 2, self.hidden_channels],
+            out_norm=True
+        )
+        self.prot_evo = MLP(
+            [self.prot_evo_in_channels, self.hidden_channels * 2, self.hidden_channels],
+            out_norm=True
+        )
+
+        # Graph encoders (drug/protein)
+        self.drug_gnn_1 = GATConv(self.hidden_channels, self.hidden_channels // 2, heads=2, dropout=0.1)
+        self.drug_gnn_2 = GATConv(self.hidden_channels, self.hidden_channels // 2, heads=2, dropout=0.1)
+        self.prot_gnn_1 = GATConv(self.hidden_channels, self.hidden_channels // 2, heads=2, dropout=0.1)
+        self.prot_gnn_2 = GATConv(self.hidden_channels, self.hidden_channels // 2, heads=2, dropout=0.1)
+        self.drug_gnn_norm = nn.LayerNorm(self.hidden_channels)
+        self.prot_gnn_norm = nn.LayerNorm(self.hidden_channels)
+
+        self.drug_graph_proj = nn.Linear(self.hidden_channels * 2, self.hidden_channels)
+        self.prot_graph_proj = nn.Linear(self.hidden_channels * 2, self.hidden_channels)
+
+        # Sequence encoders (RSGCL-style CNN)
+        seq_embed_dim = self.hidden_channels * 2
+        self.smiles_embedding = nn.Embedding(65, seq_embed_dim, padding_idx=0)
+        self.protein_embedding = nn.Embedding(26, seq_embed_dim, padding_idx=0)
+
+        self.CNN_smiles = nn.Sequential(
+            nn.Conv1d(in_channels=seq_embed_dim, out_channels=512, kernel_size=7, padding=3),
+            nn.ReLU(),
+            nn.Conv1d(in_channels=512, out_channels=self.hidden_channels, kernel_size=7, padding=3),
+            nn.ReLU()
+        )
+        self.CNN_sequence = nn.Sequential(
+            nn.Conv1d(in_channels=seq_embed_dim, out_channels=512, kernel_size=7, padding=3),
+            nn.ReLU(),
+            nn.Conv1d(in_channels=512, out_channels=self.hidden_channels, kernel_size=7, padding=3),
+            nn.ReLU()
+        )
+
+        # Side fusion (graph + sequence + optional external embedding)
+        self.drug_side_proj = nn.Linear(self.hidden_channels * 3, self.hidden_channels)
+        self.prot_side_proj = nn.Linear(self.hidden_channels * 3, self.hidden_channels)
+
+        # Relational similarity refinement in-batch
+        self.drug_rel_refiner = SimilarityGraphRefiner(self.hidden_channels, threshold=0.5, dropout=0.1)
+        self.prot_rel_refiner = SimilarityGraphRefiner(self.hidden_channels, threshold=0.5, dropout=0.1)
+
+        # Cross-modal interaction
+        self.cross_attention = nn.MultiheadAttention(self.hidden_channels, num_heads=4, batch_first=True, dropout=0.1)
+
+        # RSGCL-style classifier head
+        self.d1 = nn.Dropout(p=0.1)
+        self.d2 = nn.Dropout(p=0.1)
+        self.d3 = nn.Dropout(p=0.1)
+        self.leaky = nn.LeakyReLU()
+        self.fc1 = nn.Linear(self.hidden_channels * 6, 512)
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = nn.Linear(256, 128)
+        self.fc4 = nn.Linear(128, 2)
+
+        self.to(device)
+
+    def _pool_external_embedding(self, tensor, batch_size, device):
+        if tensor is None or not torch.is_tensor(tensor):
+            return torch.zeros(batch_size, self.hidden_channels, device=device)
+
+        emb = tensor
+        if emb.dim() == 3 and emb.size(1) == 1:
+            emb = emb.squeeze(1)
+        if emb.dim() == 1:
+            emb = emb.unsqueeze(0)
+        emb = emb.float()
+
+        if emb.size(0) > batch_size:
+            emb = emb[:batch_size]
+        elif emb.size(0) < batch_size:
+            pad = torch.zeros(batch_size - emb.size(0), emb.size(1), device=emb.device, dtype=emb.dtype)
+            emb = torch.cat([emb, pad], dim=0)
+
+        emb = F.adaptive_avg_pool1d(emb.unsqueeze(1), self.hidden_channels).squeeze(1)
+        return emb.to(device)
+
+    def _encode_sequence(self, tokens, embedding, cnn):
+        if tokens.dim() == 3 and tokens.size(1) == 1:
+            tokens = tokens.squeeze(1)
+        seq = embedding(tokens.long()).permute(0, 2, 1)
+        seq = cnn(seq)
+        seq = F.adaptive_max_pool1d(seq, 1).squeeze(-1)
+        return seq
+
+    def forward(self, data):
+        # Molecule fields
+        atom_x = data.mol_x
+        atom_x_feat = data.mol_x_feat
+        atom_edge_index = data.mol_edge_index
+        atom_batch = data.mol_x_batch
+        smiles_x = data.mol_smiles_x
+
+        # Protein fields
+        aa_x = data.prot_node_aa
+        aa_evo_x = data.prot_node_evo
+        aa_edge_index = data.prot_edge_index
+        aa_batch = data.prot_node_aa_batch
+        seq_x = data.prot_seq_x
+
+        # Node feature initialization
+        atom_x = self.atom_type_encoder(atom_x.squeeze(-1)) + self.atom_feat_encoder(atom_x_feat)
+        aa_x = self.prot_aa(aa_x) + self.prot_evo(aa_evo_x)
+
+        # Graph encoders
+        atom_x = F.elu(self.drug_gnn_norm(self.drug_gnn_1(atom_x, atom_edge_index)))
+        atom_x = F.elu(self.drug_gnn_norm(self.drug_gnn_2(atom_x, atom_edge_index)))
+        aa_x = F.elu(self.prot_gnn_norm(self.prot_gnn_1(aa_x, aa_edge_index)))
+        aa_x = F.elu(self.prot_gnn_norm(self.prot_gnn_2(aa_x, aa_edge_index)))
+
+        drug_graph = torch.cat([global_mean_pool(atom_x, atom_batch), global_max_pool(atom_x, atom_batch)], dim=-1)
+        prot_graph = torch.cat([global_mean_pool(aa_x, aa_batch), global_max_pool(aa_x, aa_batch)], dim=-1)
+        drug_graph = self.drug_graph_proj(drug_graph)
+        prot_graph = self.prot_graph_proj(prot_graph)
+
+        # Sequence encoders
+        drug_seq = self._encode_sequence(smiles_x, self.smiles_embedding, self.CNN_smiles)
+        prot_seq = self._encode_sequence(seq_x, self.protein_embedding, self.CNN_sequence)
+
+        # Optional external embeddings from dataset (if available)
+        batch_size = drug_graph.size(0)
+        mol_emb = getattr(data, 'mol_embedding', None)
+        prot_emb = getattr(data, 'prot_embedding', None)
+        drug_external = self._pool_external_embedding(mol_emb, batch_size, drug_graph.device)
+        prot_external = self._pool_external_embedding(prot_emb, batch_size, prot_graph.device)
+
+        # Side fusion
+        drug_side = torch.cat([drug_graph, drug_seq, drug_external], dim=-1)
+        prot_side = torch.cat([prot_graph, prot_seq, prot_external], dim=-1)
+        drug_side = self.d1(self.leaky(self.drug_side_proj(drug_side)))
+        prot_side = self.d1(self.leaky(self.prot_side_proj(prot_side)))
+
+        # In-batch relational similarity refinement
+        drug_rel = self.drug_rel_refiner(drug_side)
+        prot_rel = self.prot_rel_refiner(prot_side)
+
+        # Cross interaction
+        drug_ctx, _ = self.cross_attention(drug_rel.unsqueeze(1), prot_rel.unsqueeze(1), prot_rel.unsqueeze(1))
+        prot_ctx, _ = self.cross_attention(prot_rel.unsqueeze(1), drug_rel.unsqueeze(1), drug_rel.unsqueeze(1))
+        drug_ctx = drug_ctx.squeeze(1)
+        prot_ctx = prot_ctx.squeeze(1)
+
+        interaction_repr = torch.cat([
+            drug_rel,
+            prot_rel,
+            drug_ctx,
+            prot_ctx,
+            torch.abs(drug_rel - prot_rel),
+            drug_rel * prot_rel
+        ], dim=-1)
+
+        f1 = self.d2(self.leaky(self.fc1(self.d1(interaction_repr))))
+        f2 = self.d3(self.leaky(self.fc2(f1)))
+        f3 = self.leaky(self.fc3(f2))
+        logits = self.fc4(f3)
+        return logits, interaction_repr
+
 
 def get_m2p_edge_from_batch(atom_batch, aa_batch, node_level=None):
 

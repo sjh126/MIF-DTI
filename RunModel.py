@@ -123,8 +123,67 @@ def run_MIF_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
     else:
         print('BiomedGPT 药物 embedding 文件不存在，请先生成。')
         ligand_biomedgpt_dict=None
-        
-        
+
+    # ---- DrugLM fine-tuned embeddings ----
+    druglm_drug_dict = None
+    druglm_prot_dict = None
+    druglm_data_dir = os.path.join(os.path.dirname(__file__), '..', 'DrugLM', 'mydata_mif', DATASET)
+    ft_dir = os.path.join(druglm_data_dir, 'bge_ft_output', 'bge_output')
+
+    # Priority 1: Auto-discover from per-dataset ft output directory
+    import glob, re
+    druglm_path = None
+    if os.path.exists(ft_dir):
+        candidates = []
+        # Match both cls and pooler, prefer type from config
+        embed_type = 'cls' if hp.druglm_use_cls else 'pooler'
+        for f in glob.glob(os.path.join(ft_dir, f'epoch-*/bge-large-en-v1.5-epoch-*-{embed_type}-embeddings.pt')):
+            m = re.search(r'epoch-(\d+)', f)
+            if m:
+                is_best = 'best' in f
+                candidates.append((int(m.group(1)), is_best, f))
+        if candidates:
+            candidates.sort(key=lambda x: (x[0], not x[1]), reverse=True)
+            druglm_path = candidates[0][2]
+            print(f'Auto-discovered DrugLM embedding: {druglm_path}')
+
+    # Priority 2: Manual config path (with {dataset} placeholder support)
+    if not druglm_path and hp.druglm_embedding_path:
+        manual = str(hp.druglm_embedding_path).replace('{dataset}', DATASET)
+        if os.path.exists(manual):
+            druglm_path = manual
+
+    if druglm_path and os.path.exists(str(druglm_path)):
+        print(f'Loading DrugLM FT embeddings from {druglm_path}...')
+        druglm_pt = torch.load(str(druglm_path), weights_only=True)
+        drug_embs = druglm_pt['drug_embeddings']
+        target_embs = druglm_pt['target_embeddings']
+        import csv
+        for split in ['train', 'valid', 'test']:
+            drug_csv = os.path.join(druglm_data_dir, f'{split}_drug_information.csv')
+            prot_csv = os.path.join(druglm_data_dir, f'{split}_protein_information.csv')
+            if os.path.exists(drug_csv):
+                with open(drug_csv) as f:
+                    reader = csv.reader(f)
+                    next(reader)
+                    for row in reader:
+                        cid, smi = int(row[0]), row[1]
+                        if cid < drug_embs.shape[0]:
+                            if druglm_drug_dict is None: druglm_drug_dict = {}
+                            druglm_drug_dict[smi] = drug_embs[cid]
+            if os.path.exists(prot_csv):
+                with open(prot_csv) as f:
+                    reader = csv.reader(f)
+                    next(reader)
+                    for row in reader:
+                        pid, seq = int(row[0]), row[1]
+                        if pid < target_embs.shape[0]:
+                            if druglm_prot_dict is None: druglm_prot_dict = {}
+                            druglm_prot_dict[seq] = target_embs[pid]
+        print(f'  DrugLM drugs: {len(druglm_drug_dict) if druglm_drug_dict else 0}, targets: {len(druglm_prot_dict) if druglm_prot_dict else 0}')
+    else:
+        print('DrugLM embedding not found or not configured, skipping.')
+
     torch.cuda.empty_cache()
     '''metrics'''
     Accuracy_List_stable, AUC_List_stable, AUPR_List_stable, Recall_List_stable, Precision_List_stable = [], [], [], [], []
@@ -133,9 +192,9 @@ def run_MIF_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
         print('*' * 25, 'No.', i_fold + 1, '-fold', '*' * 25)
 
         train_dataset, valid_dataset = get_kfold_data(i_fold, train_data_list, k=K_Fold)
-        train_dataset = ProteinMoleculeDataset(train_dataset, ligand_dict, protein_dict, ligand_biomedgpt_dict, protein_biomedgpt_dict, device=device)
-        valid_dataset = ProteinMoleculeDataset(valid_dataset, ligand_dict, protein_dict, ligand_biomedgpt_dict, protein_biomedgpt_dict,  device=device)
-        test_dataset = ProteinMoleculeDataset(test_data_list, ligand_dict, protein_dict, ligand_biomedgpt_dict, protein_biomedgpt_dict,  device=device)
+        train_dataset = ProteinMoleculeDataset(train_dataset, ligand_dict, protein_dict, ligand_biomedgpt_dict, protein_biomedgpt_dict, device=device, druglm_mol_embedding=druglm_drug_dict, druglm_prot_embedding=druglm_prot_dict)
+        valid_dataset = ProteinMoleculeDataset(valid_dataset, ligand_dict, protein_dict, ligand_biomedgpt_dict, protein_biomedgpt_dict,  device=device, druglm_mol_embedding=druglm_drug_dict, druglm_prot_embedding=druglm_prot_dict)
+        test_dataset = ProteinMoleculeDataset(test_data_list, ligand_dict, protein_dict, ligand_biomedgpt_dict, protein_biomedgpt_dict,  device=device, druglm_mol_embedding=druglm_drug_dict, druglm_prot_embedding=druglm_prot_dict)
         train_size = len(train_dataset)
 
         train_loader = pyg_loader.DataLoader(train_dataset, batch_size=hp.Batch_size, shuffle=True, follow_batch=['mol_x', 'clique_x', 'prot_node_aa'], drop_last=True)
@@ -143,7 +202,8 @@ def run_MIF_model(SEED, DATASET, MODEL, K_Fold, LOSS, device):
         test_loader = pyg_loader.DataLoader(test_dataset, batch_size=hp.Batch_size,  shuffle=False, follow_batch=['mol_x', 'clique_x', 'prot_node_aa'], drop_last=True)
                                     
         """ create model"""
-        model = MODEL(device=device)
+        use_druglm = (druglm_drug_dict is not None and druglm_prot_dict is not None)
+        model = MODEL(device=device, use_druglm=use_druglm, druglm_dim=hp.druglm_embedding_dim)
 
         """Initialize weights"""
         weight_p, bias_p = [], []

@@ -219,7 +219,7 @@ class MIFBlock_1D(nn.Module):
 
 
 class MIFDTI(nn.Module):
-    def __init__(self, depth=3, device='cuda:0'):
+    def __init__(self, depth=3, device='cuda:0', use_druglm=False, druglm_dim=1024):
         super(MIFDTI, self).__init__()
 
         self.drug_in_channels = 43
@@ -228,15 +228,16 @@ class MIFDTI(nn.Module):
         self.hidden_channels = 200
         self.depth = depth
         self.device = device
+        self.use_druglm = use_druglm
 
         # MOLECULE IN FEAT
         self.atom_type_encoder = Embedding(20, self.hidden_channels)
-        self.atom_feat_encoder = MLP([self.drug_in_channels, self.hidden_channels * 2, self.hidden_channels], out_norm=True) 
+        self.atom_feat_encoder = MLP([self.drug_in_channels, self.hidden_channels * 2, self.hidden_channels], out_norm=True)
         self.bond_encoder = Embedding(10, self.hidden_channels)
 
         # PROTEIN IN FEAT
-        self.prot_evo = MLP([self.prot_evo_in_channels, self.hidden_channels * 2, self.hidden_channels], out_norm=True) 
-        self.prot_aa = MLP([self.prot_in_channels, self.hidden_channels * 2, self.hidden_channels], out_norm=True) 
+        self.prot_evo = MLP([self.prot_evo_in_channels, self.hidden_channels * 2, self.hidden_channels], out_norm=True)
+        self.prot_aa = MLP([self.prot_in_channels, self.hidden_channels * 2, self.hidden_channels], out_norm=True)
 
         # ENCODER
         self.blocks = nn.ModuleList([MIFBlock() for _ in range(depth)])
@@ -245,48 +246,75 @@ class MIFDTI(nn.Module):
         self.prot_seq_emb = nn.Embedding(26, self.hidden_channels, padding_idx=0)
         self.blocks_1D = nn.ModuleList([MIFBlock_1D() for _ in range(depth)])
 
-        self.attn = AttentionResidualRESCAL(self.hidden_channels, self.depth * 2, dropout=0.0)
-        # self.attn = RESCAL(self.hidden_channels, self.depth*2)
-        # self.attn = PoolAttention(self.hidden_channels)
+        # ---- DrugLM fusion modules ----
+        if use_druglm:
+            # Project DrugLM embedding to hidden_dim
+            self.druglm_drug_proj = MLP([druglm_dim, self.hidden_channels * 2, self.hidden_channels], out_norm=True)
+            self.druglm_prot_proj = MLP([druglm_dim, self.hidden_channels * 2, self.hidden_channels], out_norm=True)
+            # Learnable scaling: start at 0 for safe warm-start, let training decide contribution
+            self.druglm_node_alpha_d = nn.Parameter(torch.tensor(0.0))
+            self.druglm_node_alpha_p = nn.Parameter(torch.tensor(0.0))
+            self.druglm_gate_alpha = nn.Parameter(torch.tensor(0.0))
+            self.druglm_interact_alpha = nn.Parameter(torch.tensor(0.0))
+            # FiLM gate: [rep_i || ctx] -> gate_vector (200-dim)
+            self.drug_gate = MLP([self.hidden_channels * 2, self.hidden_channels, self.hidden_channels], out_norm=False)
+            self.prot_gate = MLP([self.hidden_channels * 2, self.hidden_channels, self.hidden_channels], out_norm=False)
+            # Final classifier takes interaction_repr (36) + DrugLM interaction (200)
+            self.final_mlp = nn.Sequential(
+                nn.Linear(36 + self.hidden_channels, 128),
+                nn.ELU(),
+                nn.Dropout(0.3),
+                nn.Linear(128, 2),
+            )
+
+        n_repr = self.depth * 2
+        self.attn = AttentionResidualRESCAL(self.hidden_channels, n_repr, dropout=0.0)
 
         self.to(device)
 
-    def forward(self,data):
-        #print(data)
-        #print(data.mol_smiles_x)  #torch.Size([128, 200])
-        #print(data.prot_seq_x.shape)  #torch.Size([128,1500])
-        #print(data.mol_smiles_x.shape)  #[batch,200]
-        # Molecule
+    def forward(self, data):
         atom_x, atom_x_feat, smiles_x, atom_edge_index, bond_x, mol_node_levels = \
             data.mol_x, data.mol_x_feat, data.mol_smiles_x, data.mol_edge_index, data.mol_edge_attr, data.mol_node_levels
-        # Protein (amino acid)
         aa_x, aa_evo_x, seq_x, aa_edge_index, aa_edge_weight = \
-            data.prot_node_aa, data.prot_node_evo, data.prot_seq_x, data.prot_edge_index, data.prot_edge_weight, \
-        # Batch
+            data.prot_node_aa, data.prot_node_evo, data.prot_seq_x, data.prot_edge_index, data.prot_edge_weight
         atom_batch, aa_batch = data.mol_x_batch, data.prot_node_aa_batch
-        # Bi Graph
         m2p_edge_index = data.m2p_edge_index
 
-        # MOLECULE Featurize
+        # ---- DrugLM context extraction ----
+        drug_ctx = None
+        prot_ctx = None
+        if self.use_druglm:
+            druglm_mol = getattr(data, 'druglm_mol_emb', None)
+            druglm_prot = getattr(data, 'druglm_prot_emb', None)
+            if druglm_mol is not None and druglm_prot is not None:
+                drug_ctx = self.druglm_drug_proj(druglm_mol.squeeze(1))   # [batch, 200]
+                prot_ctx = self.druglm_prot_proj(druglm_prot.squeeze(1))  # [batch, 200]
+
+        # MOLECULE Featurize (+ DrugLM node enrichment, gradual warm-start)
         atom_x = self.atom_type_encoder(atom_x.squeeze()) + self.atom_feat_encoder(atom_x_feat)
         bond_x = self.bond_encoder(bond_x)
-                
-        # PROTEIN Featurize
+        if drug_ctx is not None:
+            atom_x = atom_x + self.druglm_node_alpha_d * drug_ctx[atom_batch]
+
+        # PROTEIN Featurize (+ DrugLM node enrichment, gradual warm-start)
         aa_x = self.prot_aa(aa_x) + self.prot_evo(aa_evo_x)
         aa_edge_attr = rbf(aa_edge_weight, D_max=1.0, D_count=self.hidden_channels, device=self.device)
+        if prot_ctx is not None:
+            aa_x = aa_x + self.druglm_node_alpha_p * prot_ctx[aa_batch]
 
-        # Encoding
+        # Encoding (GNN blocks)
         drug_repr = []
         prot_repr = []
         for i in range(self.depth):
-            out = self.blocks[i](atom_x, atom_edge_index, bond_x, atom_batch, \
-                                 aa_x, aa_edge_index, aa_edge_attr, aa_batch, \
+            out = self.blocks[i](atom_x, atom_edge_index, bond_x, atom_batch,
+                                 aa_x, aa_edge_index, aa_edge_attr, aa_batch,
                                  m2p_edge_index)
             atom_x, aa_x, drug_global_repr, prot_global_repr = out
-            drug_global_repr = atom_x[mol_node_levels==2]
+            drug_global_repr = atom_x[mol_node_levels == 2]
             drug_repr.append(drug_global_repr)
             prot_repr.append(prot_global_repr)
 
+        # Encoding (1D-CNN blocks)
         atom_x_seq = self.drug_seq_emb(smiles_x)
         aa_x_seq = self.prot_seq_emb(seq_x)
         for i in range(self.depth):
@@ -295,10 +323,30 @@ class MIFDTI(nn.Module):
             drug_repr.append(drug_seq_pool)
             prot_repr.append(prot_seq_pool)
 
+        # ---- DrugLM gated fusion into each representation ----
+        if drug_ctx is not None:
+            for i in range(len(drug_repr)):
+                gate_d = torch.sigmoid(self.drug_gate(torch.cat([drug_repr[i], drug_ctx], dim=-1)))
+                gate_p = torch.sigmoid(self.prot_gate(torch.cat([prot_repr[i], prot_ctx], dim=-1)))
+                # Gradual warm-start: alpha starts at 0, letting GNN/CNN dominate initially
+                blend_d = gate_d * drug_repr[i] + (1 - gate_d) * drug_ctx
+                blend_p = gate_p * prot_repr[i] + (1 - gate_p) * prot_ctx
+                drug_repr[i] = drug_repr[i] + self.druglm_gate_alpha * (blend_d - drug_repr[i])
+                prot_repr[i] = prot_repr[i] + self.druglm_gate_alpha * (blend_p - prot_repr[i])
+
         drug_repr = torch.stack(drug_repr, dim=-2)
         prot_repr = torch.stack(prot_repr, dim=-2)
-        # Co-attn
+
+        # Co-attn interaction
         logits, interaction_repr = self.attn(drug_repr, prot_repr)
+
+        # ---- DrugLM direct interaction signal ----
+        if drug_ctx is not None:
+            druglm_interaction = drug_ctx * prot_ctx  # [batch, 200]
+            # Gradual warm-start: alpha controls how much DrugLM interaction contributes
+            interaction_repr = torch.cat([interaction_repr, self.druglm_interact_alpha * druglm_interaction], dim=-1)
+            logits = self.final_mlp(interaction_repr)
+
         return logits, interaction_repr
 
 

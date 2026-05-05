@@ -1,6 +1,6 @@
 import random
 from collections import defaultdict
-
+#sk-4d8f5ac9ab2e404d80012d0347eec185
 input_file = "/home/sjh/DTI/MIF-DTI/DataSets/Davis_row.txt"
 output_file = "/home/sjh/DTI/MIF-DTI/DataSets/davis_small.txt"
 num_proteins = 10  # 随机选择的蛋白质种类数

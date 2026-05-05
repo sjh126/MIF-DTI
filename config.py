@@ -16,3 +16,6 @@ class hyperparameter():
         self.conv = 50
         self.char_dim = 64
         self.loss_epsilon = 1
+        self.druglm_embedding_path = None  # None = auto-discover from mydata_mif/{dataset}/bge_ft_output/
+        self.druglm_embedding_dim = 1024
+        self.druglm_use_cls = True  # True for CLS, False for POOLER
